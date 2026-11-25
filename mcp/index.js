@@ -1,306 +1,466 @@
 #!/usr/bin/env node
-// MADB MCP — modelagem de bancos PostgreSQL (tabelas, FKs, DDL, Mermaid, JSON compatível com o site MADB)
+// MADB MCP — modela bancos PostgreSQL por conversa (tabelas, FKs, enums, CHECKs, índices, triggers,
+// partições, comentários), valida e gera SQL, Mermaid e o JSON do site MADB.
+// O arquivo do modelo usa o MESMO formato do site (v2), então o site pode abri-lo ou sincronizá-lo direto.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/* ---------- núcleo compartilhado (madb-core.js, na raiz do repositório) ---------- */
+function loadCore() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [path.join(here, "..", "madb-core.js"), path.join(here, "madb-core.js")];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      const mod = { exports: {} };
+      new Function("module", "exports", "self", fs.readFileSync(p, "utf8"))(mod, mod.exports, undefined);
+      return mod.exports;
+    }
+  }
+  throw new Error("madb-core.js não encontrado. Ele deve estar na pasta acima de mcp/ (raiz do repositório) ou ao lado do index.js.");
+}
+const M = loadCore();
 
 const FILE = process.env.MADB_MODELO || path.join(os.homedir(), ".madb", "modelo.json");
+const expand = (p) => (p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p);
 
-/* ---------- persistência (modelo baseado em nomes) ---------- */
-function load() {
-  try { return JSON.parse(fs.readFileSync(FILE, "utf8")); } catch { return { tables: [] }; }
+/* ---------- persistência ---------- */
+function formatErrors(list, max = 8) {
+  const l = list.slice(0, max).map((e) => `- ${e.message}`);
+  if (list.length > max) l.push(`- … e mais ${list.length - max}`);
+  return l.join("\n");
 }
-function save(m) {
+function loadModel() {
+  if (!fs.existsSync(FILE)) return { model: M.emptyModel(), legacy: false };
+  const text = fs.readFileSync(FILE, "utf8");
+  if (!text.trim()) return { model: M.emptyModel(), legacy: false };
+  const p = M.parseJSON(text);
+  if (!p.ok) throw new Error(`O arquivo do modelo (${FILE}) não é um JSON válido:\n${p.error.message}`);
+  const n = M.normalize(p.value);
+  if (n.errors.length) throw new Error(`O arquivo do modelo (${FILE}) tem problemas:\n${formatErrors(n.errors)}`);
+  return { model: n.model, legacy: !!n.legacy };
+}
+let legacyBackupDone = false;
+function saveModel(model, legacy) {
   fs.mkdirSync(path.dirname(FILE), { recursive: true });
-  fs.writeFileSync(FILE, JSON.stringify(m, null, 2));
+  if (legacy && !legacyBackupDone && fs.existsSync(FILE)) {
+    const bak = FILE + ".bak-v1";
+    if (!fs.existsSync(bak)) fs.copyFileSync(FILE, bak);
+    legacyBackupDone = true;
+  }
+  fs.writeFileSync(FILE, M.exportJSON(model));
 }
 
 /* ---------- helpers ---------- */
-const RES = new Set(["user","order","group","table","select","column","check","default","end","from","to","limit","offset","primary","references","unique","desc","asc","all","analyse","analyze","both","case","cast","create","current_user","distinct","do","else","for","grant","having","in","into","leading","not","null","on","only","or","placing","some","then","trailing","union","using","when","where","with"]);
-const q = (n) => (/^[a-z_][a-z0-9_]*$/.test(n) && !RES.has(n)) ? n : '"' + String(n).replace(/"/g, '""') + '"';
-const qt = (t) => (t.schema && t.schema !== "public" ? q(t.schema) + "." : "") + q(t.name);
-const baseType = (ty) => { const l = String(ty).toLowerCase().trim(); return l === "serial" ? "integer" : l === "bigserial" ? "bigint" : l === "smallserial" ? "smallint" : l; };
-const findT = (m, name, schema) => m.tables.find((t) => t.name === name && (!schema || t.schema === schema));
-const findC = (t, name) => t && t.cols.find((c) => c.name === name);
-
-function parseRef(m, ref) {
+const txt = (s) => ({ content: [{ type: "text", text: s }] });
+const fail = (e) => ({ isError: true, content: [{ type: "text", text: "Erro: " + (e?.message || e) }] });
+function mutate(fn) {
+  return async (args) => {
+    try {
+      const st = loadModel();
+      const msg = await fn(st.model, args);
+      saveModel(st.model, st.legacy);
+      return txt(msg + problemas(st.model));
+    } catch (e) { return fail(e); }
+  };
+}
+function read(fn) {
+  return async (args) => { try { return txt(await fn(loadModel().model, args)); } catch (e) { return fail(e); } };
+}
+function problemas(m) {
+  const v = M.validate(m);
+  let s = "";
+  if (v.errors.length) s += `\n\nErros no modelo (${v.errors.length}):\n` + formatErrors(v.errors, 5);
+  if (v.warnings.length) s += `\n\nAvisos: ${v.warnings.length} (use madb_validar para ver).`;
+  return s;
+}
+function T(m, nome, schema) {
+  const t = M.findTable(m, nome, schema);
+  if (!t) {
+    const names = m.tables.map(M.tname).slice(0, 30).join(", ") || "(nenhuma)";
+    throw new Error(`Tabela "${nome}" não existe no modelo. Tabelas: ${names}.`);
+  }
+  return t;
+}
+function C(t, nome) {
+  const c = M.findCol(t, nome);
+  if (!c) throw new Error(`Coluna "${nome}" não existe em "${M.tname(t)}". Colunas: ${t.cols.map((x) => x.name).join(", ")}.`);
+  return c;
+}
+// "tabela.coluna" ou "schema.tabela.coluna"
+function parseRef(m, ref, selfTable) {
   const p = String(ref).split(".");
   if (p.length < 2 || p.length > 3) throw new Error(`Referência inválida "${ref}". Use "tabela.coluna" ou "schema.tabela.coluna".`);
   const col = p.pop(), tab = p.pop(), sch = p.pop();
-  const t = findT(m, tab, sch);
-  if (!t) throw new Error(`Tabela "${tab}" não existe no modelo.`);
-  if (!findC(t, col)) throw new Error(`Coluna "${col}" não existe em "${tab}".`);
-  return { table: t.name, schema: t.schema, col };
+  let t = selfTable && selfTable.name === tab && (!sch || sch === selfTable.schema) ? selfTable : M.findTable(m, tab, sch);
+  if (!t) throw new Error(`Tabela "${tab}" não existe no modelo (referência "${ref}"). Crie as tabelas-pai antes.`);
+  return { t, c: C(t, col) };
 }
-function refStr(r) { return r ? `${r.schema && r.schema !== "public" ? r.schema + "." : ""}${r.table}.${r.col}` : null; }
-function refTarget(m, r) { const t = findT(m, r.table, r.schema); return { t, c: findC(t, r.col) }; }
+function remember(arr, id) { return arr.filter((x) => x.id !== id); }
 
+const prune = (m) => M.prune(m);
+const cleaned = (l) => (l.length ? "\nLimpeza automática:\n- " + l.join("\n- ") : "");
+
+function describe(m) {
+  const L = [`Arquivo: ${FILE}`, `Resumo: ${JSON.stringify(M.summary(m))}`];
+  if (m.options && m.options.indexNaming) L.push(`Nomenclatura de índices: ${m.options.indexNaming}`);
+  (m.schemas || []).forEach((s) => L.push(`schema ${s.name}${s.comment ? " — " + s.comment : ""}`));
+  m.enums.forEach((e) => L.push(`enum ${e.schema}.${e.name} (${e.values.join(", ")})`));
+  m.functions.forEach((f) => L.push(`função ${f.schema}.${f.name}`));
+  if (!m.tables.length) L.push("(sem tabelas)");
+  const nameOf = (t, id) => M.colById(t, id)?.name ?? "?";
+  m.tables.forEach((t) => {
+    L.push("", `${M.tname(t)}${t.comment ? " — " + t.comment : ""}${t.partition ? ` [particionada por ${t.partition.by} (${t.partition.cols.map((i) => nameOf(t, i)).join(", ")})]` : ""}`);
+    t.cols.forEach((c) => {
+      const rt = c.ref ? M.tableById(m, c.ref.t) : null;
+      L.push(`  - ${c.name} ${c.type}${c.identity ? ` IDENTITY(${c.identity})` : ""}${c.generated ? ` GERADA(${c.generated})` : ""}${c.pk ? " PK" : ""}${c.nn && !c.pk ? " NOT NULL" : ""}${c.uq ? " UNIQUE" : ""}${c.def !== "" ? ` DEFAULT ${c.def}` : ""}${rt ? ` -> ${M.tname(rt)}.${M.colById(rt, c.ref.c)?.name} (ON DELETE ${c.del})` : ""}`);
+    });
+    (t.constraints || []).forEach((k) => {
+      if (k.kind === "check") L.push(`  * CHECK ${k.name || ""}: ${k.expr}`);
+      else if (k.kind === "unique") L.push(`  * UNIQUE ${k.name || ""} (${k.cols.map((i) => nameOf(t, i)).join(", ")})${k.nullsNotDistinct ? " NULLS NOT DISTINCT" : ""}`);
+      else { const rt = M.tableById(m, k.ref.t); L.push(`  * FK ${k.name || ""} (${k.cols.map((i) => nameOf(t, i)).join(", ")}) -> ${M.tname(rt)} (${k.ref.cols.map((i) => nameOf(rt, i)).join(", ")}) ON DELETE ${k.del}`); }
+    });
+    (t.indexes || []).forEach((x) => L.push(`  * ÍNDICE ${x.unique ? "UNIQUE " : ""}${x.name} (${x.cols.map((e) => e.expr ? `(${e.expr})` : nameOf(t, e.c) + (e.order ? " " + e.order : "")).join(", ")})${x.where ? " WHERE " + x.where : ""}`));
+    (t.triggers || []).forEach((g) => L.push(`  * TRIGGER ${g.name}: ${g.timing} ${g.events.join(" OR ")} FOR EACH ${g.level} -> ${g.function}`));
+    (t.partitions || []).forEach((p) => L.push(`  * PARTIÇÃO ${p.name}: ${p.bound}`));
+  });
+  return L.join("\n");
+}
+
+/* ---------- esquemas de entrada ---------- */
+const DEL = z.enum(["NO ACTION", "CASCADE", "SET NULL", "RESTRICT"]);
 const ColSchema = z.object({
   nome: z.string().min(1).describe("Nome da coluna"),
-  tipo: z.string().default("text").describe("Tipo PostgreSQL, ex.: bigserial, varchar(120), numeric(12,2), timestamptz, uuid, jsonb"),
-  pk: z.boolean().default(false).describe("Faz parte da chave primária (várias colunas pk = PK composta)"),
-  nn: z.boolean().default(false).describe("NOT NULL (implícito para PK)"),
-  uq: z.boolean().default(false).describe("UNIQUE"),
-  padrao: z.string().default("").describe("Expressão DEFAULT, ex.: now(), 0, 'aberto'"),
-  ref: z.string().optional().describe('Chave estrangeira: "tabela.coluna" (a tabela referenciada precisa já existir)'),
-  on_delete: z.enum(["NO ACTION", "CASCADE", "SET NULL", "RESTRICT"]).default("NO ACTION"),
+  tipo: z.string().default("text").describe("Tipo PostgreSQL, ex.: uuid, bigint, varchar(120), numeric(14,2), timestamptz, jsonb ou o nome de um enum (schema.nome)"),
+  pk: z.boolean().default(false).describe("Parte da chave primária (várias colunas com pk = PK composta)"),
+  nn: z.boolean().default(false).describe("NOT NULL (implícito na PK)"),
+  uq: z.boolean().default(false).describe("UNIQUE de coluna única"),
+  padrao: z.string().default("").describe("Expressão DEFAULT, ex.: now(), 0, 'aberto', gen_random_uuid()"),
+  ref: z.string().optional().describe('FK de uma coluna: "tabela.coluna" ou "schema.tabela.coluna"'),
+  on_delete: DEL.default("NO ACTION"),
+  identity: z.enum(["ALWAYS", "BY DEFAULT"]).optional().describe("GENERATED ALWAYS|BY DEFAULT AS IDENTITY (use tipo inteiro; não combine com padrao)"),
+  gerada: z.string().optional().describe("Expressão de coluna gerada: GENERATED ALWAYS AS (expressão) STORED"),
+  comentario: z.string().optional().describe("COMMENT ON COLUMN"),
 });
-function toCol(m, c, selfTable) {
-  let ref = null;
-  if (c.ref) {
-    const p = String(c.ref).split(".");
-    // permite auto-referência (tabela ainda não gravada no modelo)
-    if (selfTable && (p.length === 2 && p[0] === selfTable.name) ) {
-      ref = { table: selfTable.name, schema: selfTable.schema, col: p[1] };
-    } else ref = parseRef(m, c.ref);
-  }
-  return { name: c.nome, type: c.tipo || "text", pk: !!c.pk, nn: !!c.nn || !!c.pk, uq: !!c.uq, def: c.padrao ?? "", ref, del: c.on_delete || "NO ACTION" };
+function buildCol(m, t, c) {
+  const col = { id: M.newId(m, "col", t), name: c.nome, type: c.tipo || "text", pk: !!c.pk, nn: !!c.nn || !!c.pk, uq: !!c.uq, def: c.padrao ?? "", ref: null, del: c.on_delete || "NO ACTION" };
+  if (c.identity) col.identity = c.identity;
+  if (c.gerada) col.generated = c.gerada;
+  if (c.comentario) col.comment = c.comentario;
+  return col;
 }
-
-/* ---------- geradores ---------- */
-function genSQL(m, indicesFk) {
-  const out = ["-- Gerado por MADB MCP", "-- PostgreSQL", ""];
-  const schemas = [...new Set(m.tables.map((t) => t.schema).filter((s) => s && s !== "public"))];
-  schemas.forEach((s) => out.push(`CREATE SCHEMA IF NOT EXISTS ${q(s)};`));
-  if (schemas.length) out.push("");
-  m.tables.forEach((t) => {
-    const pks = t.cols.filter((c) => c.pk);
-    const lines = t.cols.map((c) => {
-      let l = `  ${q(c.name)} ${c.type || "text"}`;
-      if (c.pk && pks.length === 1) l += " PRIMARY KEY";
-      else if (c.nn || c.pk) l += " NOT NULL";
-      if (c.uq && !(c.pk && pks.length === 1)) l += " UNIQUE";
-      if (c.def !== "") l += ` DEFAULT ${c.def}`;
-      return l;
-    });
-    if (pks.length > 1) lines.push(`  CONSTRAINT ${q(t.name + "_pkey")} PRIMARY KEY (${pks.map((c) => q(c.name)).join(", ")})`);
-    out.push(`CREATE TABLE ${qt(t)} (\n${lines.join(",\n")}\n);`, "");
-  });
-  const fks = [], idx = [];
-  m.tables.forEach((t) => t.cols.forEach((c) => {
-    if (!c.ref) return;
-    const { t: rt, c: rc } = refTarget(m, c.ref); if (!rt || !rc) return;
-    fks.push(`ALTER TABLE ${qt(t)}\n  ADD CONSTRAINT ${q(`${t.name}_${c.name}_fkey`)} FOREIGN KEY (${q(c.name)})\n  REFERENCES ${qt(rt)} (${q(rc.name)})${c.del && c.del !== "NO ACTION" ? ` ON DELETE ${c.del}` : ""};`);
-    if (indicesFk) idx.push(`CREATE INDEX ${q(`idx_${t.name}_${c.name}`)} ON ${qt(t)} (${q(c.name)});`);
-  }));
-  if (fks.length) out.push("-- Chaves estrangeiras", ...fks.flatMap((f) => [f, ""]));
-  if (idx.length) out.push("-- Índices", ...idx, "");
-  if (!m.tables.length) out.push("-- (nenhuma tabela definida)");
-  return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
-}
-function genMMD(m) {
-  const nm = (s) => String(s).replace(/[^A-Za-z0-9_]/g, "_") || "_";
-  const ty = (s) => String(s).replace(/\(.*?\)/g, "").replace(/\[\]/g, "_arr").replace(/\s+/g, "_") || "text";
-  let o = "erDiagram\n";
-  m.tables.forEach((t) => {
-    o += `  ${nm(t.name)} {\n`;
-    t.cols.forEach((c) => {
-      const k = [c.pk && "PK", c.ref && "FK", c.uq && !c.pk && "UK"].filter(Boolean).join(",");
-      o += `    ${ty(c.type)} ${nm(c.name)}${k ? " " + k : ""}\n`;
-    });
-    o += "  }\n";
-  });
-  m.tables.forEach((t) => t.cols.forEach((c) => {
-    if (!c.ref) return;
-    const single = t.cols.filter((z) => z.pk).length === 1 && c.pk;
-    const l = c.nn || c.pk ? "||" : "|o", r = c.uq || single ? "o|" : "o{";
-    o += `  ${nm(c.ref.table)} ${l}--${r} ${nm(t.name)} : "${c.name}"\n`;
-  }));
-  return o;
-}
-function validar(m) {
-  const w = [];
-  const seen = {};
-  m.tables.forEach((t) => {
-    const k = `${t.schema}.${t.name}`.toLowerCase();
-    seen[k] = (seen[k] || 0) + 1;
-    if (!t.cols.length) w.push(`"${t.name}" não tem colunas.`);
-    if (!t.cols.some((c) => c.pk)) w.push(`"${t.name}" não tem chave primária.`);
-    const cn = {};
-    t.cols.forEach((c) => {
-      cn[c.name.toLowerCase()] = (cn[c.name.toLowerCase()] || 0) + 1;
-      if (c.ref) {
-        const { t: rt, c: rc } = refTarget(m, c.ref);
-        if (!rt || !rc) { w.push(`FK ${t.name}.${c.name} aponta para ${refStr(c.ref)}, que não existe mais.`); return; }
-        if (baseType(rc.type) !== baseType(c.type)) w.push(`FK ${t.name}.${c.name} (${c.type}) difere do tipo de ${rt.name}.${rc.name} (${rc.type}).`);
-        if (!rc.pk && !rc.uq) w.push(`FK ${t.name}.${c.name} aponta para coluna sem PK/UNIQUE (o PostgreSQL vai recusar).`);
-        if (c.del === "SET NULL" && (c.nn || c.pk)) w.push(`FK ${t.name}.${c.name} usa ON DELETE SET NULL mas a coluna é NOT NULL/PK.`);
-      }
-    });
-    Object.entries(cn).forEach(([n, v]) => { if (v > 1) w.push(`"${t.name}" tem coluna duplicada: ${n}.`); });
-  });
-  Object.entries(seen).forEach(([n, v]) => { if (v > 1) w.push(`Tabela duplicada: ${n}.`); });
-  return [...new Set(w)];
-}
-
-/* ---------- compatibilidade com o JSON do site MADB (ids + x/y) ---------- */
-function toMadbJSON(m) {
-  const tid = {}, cid = {};
-  m.tables.forEach((t, i) => { tid[`${t.schema}.${t.name}`] = "t" + (i + 1); t.cols.forEach((c, j) => (cid[`${t.schema}.${t.name}.${c.name}`] = `t${i + 1}c${j + 1}`)); });
-  const W = 230, gx = W + 90; let y = 40, rowMax = 0;
-  const tables = m.tables.map((t, i) => {
-    const col = i % 3, h = 34 + t.cols.length * 22 + 6;
-    const x = 40 + col * gx, yy = y; rowMax = Math.max(rowMax, h);
-    if (col === 2) { y += rowMax + 50; rowMax = 0; }
-    return {
-      id: tid[`${t.schema}.${t.name}`], name: t.name, schema: t.schema, x, y: yy,
-      cols: t.cols.map((c) => ({
-        id: cid[`${t.schema}.${t.name}.${c.name}`], name: c.name, type: c.type, pk: c.pk, nn: c.nn, uq: c.uq, def: c.def,
-        ref: c.ref ? { t: tid[`${c.ref.schema}.${c.ref.table}`], c: cid[`${c.ref.schema}.${c.ref.table}.${c.ref.col}`] } : null,
-        del: c.del,
-      })),
-    };
-  });
-  return { tables };
-}
-function fromAnyJSON(raw) {
-  if (!raw || !Array.isArray(raw.tables)) throw new Error('JSON precisa ter a chave "tables" (lista).');
-  const tById = {}, cById = {};
-  raw.tables.forEach((t) => { if (t.id) tById[t.id] = t; (t.cols || []).forEach((c) => { if (c.id) cById[`${t.id}|${c.id}`] = { t, c }; }); });
-  const tables = raw.tables.map((t, i) => ({
-    name: String(t.name || `tabela_${i + 1}`), schema: String(t.schema || "public"),
-    cols: (t.cols || []).map((c) => ({
-      name: String(c.name || "coluna"), type: String(c.type || "text"), pk: !!c.pk, nn: !!c.nn || !!c.pk, uq: !!c.uq,
-      def: c.def == null ? "" : String(c.def), del: c.del || "NO ACTION", _r: c.ref,
-    })),
-    _src: t,
-  }));
-  tables.forEach((t) => t.cols.forEach((c, j) => {
-    const r = c._r; delete c._r; c.ref = null;
-    if (r && typeof r === "object") {
-      const hit = cById[`${r.t}|${r.c}`];
-      if (hit) c.ref = { table: String(hit.t.name), schema: String(hit.t.schema || "public"), col: String(hit.c.name) };
-      else if (r.table && r.col) c.ref = { table: r.table, schema: r.schema || "public", col: r.col };
-    }
-  }));
-  tables.forEach((t) => delete t._src);
-  return { tables };
-}
+const SCH = z.string().optional().describe("Schema da tabela (padrão: public; se omitido e houver só uma com esse nome, ela é usada)");
 
 /* ---------- servidor ---------- */
-const server = new McpServer({ name: "madb", version: "0.1.0" });
-const txt = (s) => ({ content: [{ type: "text", text: s }] });
-const err = (e) => ({ isError: true, content: [{ type: "text", text: "Erro: " + (e?.message || e) }] });
-const resumo = (m) => !m.tables.length ? "(modelo vazio)" : m.tables.map((t) =>
-  `${t.schema !== "public" ? t.schema + "." : ""}${t.name}\n` + t.cols.map((c) =>
-    `  - ${c.name} ${c.type}${c.pk ? " PK" : ""}${c.nn && !c.pk ? " NOT NULL" : ""}${c.uq ? " UNIQUE" : ""}${c.def !== "" ? ` DEFAULT ${c.def}` : ""}${c.ref ? ` -> ${refStr(c.ref)} (ON DELETE ${c.del})` : ""}`).join("\n")).join("\n");
-const wrap = (fn) => async (args) => { try { return await fn(args); } catch (e) { return err(e); } };
+const server = new McpServer({ name: "madb", version: "0.2.0" });
+const reg = (name, description, inputSchema, handler) => server.registerTool(name, { description, inputSchema }, handler);
 
-server.registerTool("madb_ver_modelo", {
-  description: "Mostra o modelo atual (tabelas, colunas, PKs e FKs) em texto. Use antes de editar para ver o estado.",
-  inputSchema: {},
-}, wrap(async () => txt(`Arquivo: ${FILE}\n\n${resumo(load())}`)));
+reg("madb_ver_modelo", "Mostra o modelo atual em texto (tabelas, colunas, PKs, FKs, enums, CHECKs, índices, triggers, partições). Use antes de editar.", {}, read((m) => describe(m)));
+reg("madb_caminho_modelo", "Mostra o caminho do arquivo do modelo (formato v2 do site MADB). O site pode vincular esse arquivo e sincronizar sozinho.", {}, async () => txt(FILE));
 
-server.registerTool("madb_criar_tabela", {
-  description: "Cria uma tabela (ou substitui, se já existir com o mesmo nome e schema). Colunas com 'ref' viram chaves estrangeiras; a tabela referenciada precisa existir antes (crie as tabelas-pai primeiro).",
-  inputSchema: {
-    nome: z.string().min(1).describe("Nome da tabela, em snake_case"),
-    schema: z.string().default("public").describe("Schema PostgreSQL"),
-    colunas: z.array(ColSchema).min(1),
+reg("madb_criar_schema", "Declara um schema (CREATE SCHEMA IF NOT EXISTS) com comentário opcional. Schemas usados por tabelas e enums já são criados automaticamente.",
+  { nome: z.string().min(1), comentario: z.string().optional() },
+  mutate((m, { nome, comentario }) => {
+    m.schemas = m.schemas.filter((s) => s.name !== nome);
+    m.schemas.push(comentario ? { name: nome, comment: comentario } : { name: nome });
+    return `Schema ${nome} declarado.`;
+  }));
+
+reg("madb_criar_enum", "Cria (ou substitui) um enum nomeado: CREATE TYPE schema.nome AS ENUM (...). Depois use 'schema.nome' como tipo de coluna.",
+  { nome: z.string().min(1), schema: z.string().default("public"), valores: z.array(z.string().min(1)).min(1), comentario: z.string().optional() },
+  mutate((m, { nome, schema, valores, comentario }) => {
+    const old = m.enums.find((e) => e.name === nome && e.schema === schema);
+    const e = { id: old ? old.id : M.newId(m, "enum"), schema, name: nome, values: valores };
+    if (comentario) e.comment = comentario;
+    m.enums = m.enums.filter((x) => x !== old); m.enums.push(e);
+    return `Enum ${schema}.${nome} ${old ? "substituído" : "criado"} (${valores.length} valores).`;
+  }));
+reg("madb_remover_enum", "Remove um enum do modelo (não altera colunas que o usam como tipo).",
+  { nome: z.string(), schema: z.string().default("public") },
+  mutate((m, { nome, schema }) => {
+    const n = m.enums.length; m.enums = m.enums.filter((e) => !(e.name === nome && e.schema === schema));
+    if (m.enums.length === n) throw new Error(`Enum ${schema}.${nome} não existe.`);
+    return `Enum ${schema}.${nome} removido.`;
+  }));
+
+reg("madb_criar_funcao", "Cria (ou substitui) uma função SQL/PLpgSQL do modelo, informando o comando completo em 'sql' (CREATE OR REPLACE FUNCTION ...). Usada por triggers.",
+  { nome: z.string().min(1), schema: z.string().default("public"), sql: z.string().min(1).describe("Comando CREATE OR REPLACE FUNCTION completo"), comentario: z.string().optional() },
+  mutate((m, { nome, schema, sql, comentario }) => {
+    const old = m.functions.find((f) => f.name === nome && f.schema === schema);
+    const f = { id: old ? old.id : M.newId(m, "function"), schema, name: nome, sql };
+    if (comentario) f.comment = comentario;
+    m.functions = m.functions.filter((x) => x !== old); m.functions.push(f);
+    return `Função ${schema}.${nome} ${old ? "substituída" : "criada"}.`;
+  }));
+reg("madb_remover_funcao", "Remove uma função do modelo.", { nome: z.string(), schema: z.string().default("public") },
+  mutate((m, { nome, schema }) => {
+    const n = m.functions.length; m.functions = m.functions.filter((f) => !(f.name === nome && f.schema === schema));
+    if (m.functions.length === n) throw new Error(`Função ${schema}.${nome} não existe.`);
+    return `Função ${schema}.${nome} removida.`;
+  }));
+
+reg("madb_criar_tabela",
+  "Cria uma tabela (ou substitui as colunas de uma existente, preservando restrições, índices e triggers que continuem válidos). Colunas com 'ref' viram FKs; a tabela referenciada precisa existir (crie as tabelas-pai primeiro; auto-referência funciona).",
+  { nome: z.string().min(1), schema: z.string().default("public"), comentario: z.string().optional(), colunas: z.array(ColSchema).min(1) },
+  mutate((m, { nome, schema, comentario, colunas }) => {
+    const old = m.tables.find((t) => t.name === nome && t.schema === schema);
+    const t = old || { id: M.newId(m, "table"), name: nome, schema, x: null, y: null, cols: [] };
+    const oldCols = old ? old.cols : [];
+    t.cols = [];
+    colunas.forEach((c) => {
+      const col = buildCol(m, t, c);
+      const prev = oldCols.find((x) => x.name === c.nome);
+      if (prev) col.id = prev.id;
+      t.cols.push(col);
+    });
+    if (!old) m.tables.push(t);
+    if (comentario !== undefined) t.comment = comentario;
+    colunas.forEach((c, i) => {
+      if (!c.ref) return;
+      const r = parseRef(m, c.ref, t);
+      t.cols[i].ref = { t: r.t.id, c: r.c.id };
+    });
+    const dang = prune(m);
+    M.autoLayout(m, false);
+    return `Tabela ${schema}.${nome} ${old ? "atualizada" : "criada"} com ${t.cols.length} coluna(s).${cleaned(dang)}`;
+  }));
+
+reg("madb_adicionar_coluna", "Adiciona (ou substitui, se já existir) uma coluna em uma tabela.",
+  { tabela: z.string(), schema: SCH, coluna: ColSchema },
+  mutate((m, { tabela, schema, coluna }) => {
+    const t = T(m, tabela, schema);
+    const col = buildCol(m, t, coluna);
+    const i = t.cols.findIndex((x) => x.name === col.name);
+    if (i >= 0) col.id = t.cols[i].id;
+    if (i >= 0) t.cols[i] = col; else t.cols.push(col);
+    if (coluna.ref) { const r = parseRef(m, coluna.ref, t); col.ref = { t: r.t.id, c: r.c.id }; }
+    return `Coluna ${tabela}.${col.name} ${i >= 0 ? "substituída" : "adicionada"}.`;
+  }));
+
+reg("madb_definir_fk", "Define (ou remove, omitindo 'destino') a FK de UMA coluna. Para FK composta use madb_adicionar_restricao com tipo 'fk'.",
+  { tabela: z.string(), coluna: z.string(), schema: SCH, destino: z.string().optional().describe('"tabela.coluna" referenciada; omita para remover a FK'), on_delete: DEL.default("NO ACTION") },
+  mutate((m, { tabela, coluna, schema, destino, on_delete }) => {
+    const t = T(m, tabela, schema), c = C(t, coluna);
+    if (!destino) { c.ref = null; return `FK removida de ${tabela}.${coluna}.`; }
+    const r = parseRef(m, destino, t);
+    c.ref = { t: r.t.id, c: r.c.id }; c.del = on_delete;
+    return `FK ${tabela}.${coluna} -> ${destino} (ON DELETE ${on_delete}).`;
+  }));
+
+reg("madb_remover_coluna", "Remove uma coluna; FKs, restrições e índices que dependiam dela são removidos também.",
+  { tabela: z.string(), coluna: z.string(), schema: SCH },
+  mutate((m, { tabela, coluna, schema }) => {
+    const t = T(m, tabela, schema); const c = C(t, coluna);
+    t.cols = t.cols.filter((x) => x !== c);
+    return `Coluna ${tabela}.${coluna} removida.${cleaned(prune(m))}`;
+  }));
+reg("madb_remover_tabela", "Remove uma tabela; FKs de outras tabelas que apontavam para ela são removidas.",
+  { tabela: z.string(), schema: SCH },
+  mutate((m, { tabela, schema }) => {
+    const t = T(m, tabela, schema); m.tables = m.tables.filter((x) => x !== t);
+    return `Tabela ${M.tname(t)} removida.${cleaned(prune(m))}`;
+  }));
+
+reg("madb_adicionar_restricao",
+  "Adiciona (ou substitui, se o 'nome' já existir) uma restrição da tabela: 'check' (expressão livre), 'unique' (composta, com NULLS NOT DISTINCT opcional) ou 'fk' (composta, para colunas de outra tabela que formem PK ou UNIQUE). Dê nomes seguindo a convenção do projeto.",
+  {
+    tabela: z.string(), schema: SCH, tipo: z.enum(["check", "unique", "fk"]), nome: z.string().optional(),
+    expressao: z.string().optional().describe("Só para check: expressão SQL, ex.: quantidade > 0"),
+    colunas: z.array(z.string()).optional().describe("Para unique e fk: colunas desta tabela, em ordem"),
+    destino: z.object({ tabela: z.string(), schema: z.string().optional(), colunas: z.array(z.string()).min(1) }).optional().describe("Só para fk: tabela e colunas referenciadas, na mesma ordem"),
+    on_delete: DEL.default("NO ACTION"), nulls_nao_distintos: z.boolean().optional().describe("Só para unique (PostgreSQL 15+)"),
   },
-}, wrap(async ({ nome, schema, colunas }) => {
-  const m = load();
-  const self = { name: nome, schema };
-  const t = { name: nome, schema, cols: colunas.map((c) => toCol(m, c, self)) };
-  const i = m.tables.findIndex((x) => x.name === nome && x.schema === schema);
-  if (i >= 0) m.tables[i] = t; else m.tables.push(t);
-  save(m);
-  const w = validar(m);
-  return txt(`Tabela ${schema}.${nome} ${i >= 0 ? "substituída" : "criada"} com ${t.cols.length} coluna(s).${w.length ? "\n\nAvisos:\n- " + w.join("\n- ") : ""}`);
-}));
+  mutate((m, a) => {
+    const t = T(m, a.tabela, a.schema);
+    const k = { id: M.newId(m, "constraint", t), name: a.nome || "", kind: a.tipo };
+    if (a.tipo === "check") {
+      if (!a.expressao) throw new Error("Informe 'expressao' para o CHECK.");
+      k.expr = a.expressao;
+    } else {
+      if (!a.colunas || !a.colunas.length) throw new Error("Informe 'colunas'.");
+      k.cols = a.colunas.map((n) => C(t, n).id);
+      if (a.tipo === "unique") { if (a.nulls_nao_distintos) k.nullsNotDistinct = true; }
+      else {
+        if (!a.destino) throw new Error("Informe 'destino' ({tabela, colunas}) para a FK.");
+        const rt = T(m, a.destino.tabela, a.destino.schema);
+        if (a.destino.colunas.length !== a.colunas.length) throw new Error(`A FK tem ${a.colunas.length} coluna(s) locais e ${a.destino.colunas.length} referenciada(s); precisam ser iguais.`);
+        k.ref = { t: rt.id, cols: a.destino.colunas.map((n) => C(rt, n).id) };
+        k.del = a.on_delete || "NO ACTION";
+      }
+    }
+    t.constraints = (t.constraints || []).filter((x) => !(a.nome && x.name === a.nome));
+    t.constraints.push(k);
+    return `Restrição ${a.tipo}${a.nome ? " " + a.nome : ""} adicionada em ${M.tname(t)}.`;
+  }));
+reg("madb_remover_restricao", "Remove uma restrição (check/unique/fk composta) pelo nome.",
+  { tabela: z.string(), schema: SCH, nome: z.string() },
+  mutate((m, { tabela, schema, nome }) => {
+    const t = T(m, tabela, schema); const n = (t.constraints || []).length;
+    t.constraints = (t.constraints || []).filter((x) => x.name !== nome);
+    if (t.constraints.length === n) throw new Error(`Restrição "${nome}" não existe em ${M.tname(t)}.`);
+    if (!t.constraints.length) delete t.constraints;
+    return `Restrição ${nome} removida.`;
+  }));
 
-server.registerTool("madb_adicionar_coluna", {
-  description: "Adiciona (ou substitui, se já existir) uma coluna em uma tabela existente.",
-  inputSchema: { tabela: z.string(), schema: z.string().optional(), coluna: ColSchema },
-}, wrap(async ({ tabela, schema, coluna }) => {
-  const m = load(); const t = findT(m, tabela, schema);
-  if (!t) throw new Error(`Tabela "${tabela}" não existe.`);
-  const c = toCol(m, coluna, t);
-  const i = t.cols.findIndex((x) => x.name === c.name);
-  if (i >= 0) t.cols[i] = c; else t.cols.push(c);
-  save(m);
-  return txt(`Coluna ${tabela}.${c.name} ${i >= 0 ? "substituída" : "adicionada"}.`);
-}));
-
-server.registerTool("madb_definir_fk", {
-  description: "Define (ou remove, se 'destino' for omitido) a chave estrangeira de uma coluna existente.",
-  inputSchema: {
-    tabela: z.string(), coluna: z.string(), schema: z.string().optional(),
-    destino: z.string().optional().describe('"tabela.coluna" referenciada; omita para remover a FK'),
-    on_delete: z.enum(["NO ACTION", "CASCADE", "SET NULL", "RESTRICT"]).default("NO ACTION"),
+reg("madb_criar_indice",
+  "Cria (ou substitui pelo nome) um índice: colunas em ordem (com ASC/DESC e NULLS FIRST/LAST) ou expressões, UNIQUE, condição WHERE (índice parcial), NULLS NOT DISTINCT e método (btree, gin, gist...).",
+  {
+    tabela: z.string(), schema: SCH, nome: z.string().min(1),
+    colunas: z.array(z.union([z.string(), z.object({ coluna: z.string().optional(), expressao: z.string().optional(), ordem: z.enum(["ASC", "DESC"]).optional(), nulls: z.enum(["FIRST", "LAST"]).optional() })])).min(1),
+    unico: z.boolean().default(false), onde: z.string().optional().describe("Condição WHERE do índice parcial"),
+    nulls_nao_distintos: z.boolean().optional(), metodo: z.string().optional(),
   },
-}, wrap(async ({ tabela, coluna, schema, destino, on_delete }) => {
-  const m = load(); const t = findT(m, tabela, schema); const c = findC(t, coluna);
-  if (!t) throw new Error(`Tabela "${tabela}" não existe.`);
-  if (!c) throw new Error(`Coluna "${coluna}" não existe em "${tabela}".`);
-  if (!destino) { c.ref = null; save(m); return txt(`FK removida de ${tabela}.${coluna}.`); }
-  c.ref = parseRef(m, destino); c.del = on_delete; save(m);
-  const w = validar(m).filter((x) => x.includes(`${tabela}.${coluna}`));
-  return txt(`FK ${tabela}.${coluna} -> ${destino} (ON DELETE ${on_delete}).${w.length ? "\n\nAvisos:\n- " + w.join("\n- ") : ""}`);
-}));
+  mutate((m, a) => {
+    const t = T(m, a.tabela, a.schema);
+    const cols = a.colunas.map((c) => {
+      const it = typeof c === "string" ? { coluna: c } : c; const e = {};
+      if (it.expressao) e.expr = it.expressao; else e.c = C(t, it.coluna).id;
+      if (it.ordem) e.order = it.ordem; if (it.nulls) e.nulls = it.nulls;
+      return e;
+    });
+    const x = { id: M.newId(m, "index", t), name: a.nome, cols };
+    if (a.unico) x.unique = true; if (a.onde) x.where = a.onde; if (a.nulls_nao_distintos) x.nullsNotDistinct = true; if (a.metodo) x.method = a.metodo;
+    t.indexes = (t.indexes || []).filter((i) => i.name !== a.nome); t.indexes.push(x);
+    return `Índice ${a.nome} criado em ${M.tname(t)}.`;
+  }));
+reg("madb_remover_indice", "Remove um índice explícito pelo nome.", { tabela: z.string(), schema: SCH, nome: z.string() },
+  mutate((m, { tabela, schema, nome }) => {
+    const t = T(m, tabela, schema); const n = (t.indexes || []).length;
+    t.indexes = (t.indexes || []).filter((i) => i.name !== nome);
+    if (t.indexes.length === n) throw new Error(`Índice "${nome}" não existe em ${M.tname(t)}.`);
+    if (!t.indexes.length) delete t.indexes;
+    return `Índice ${nome} removido.`;
+  }));
 
-server.registerTool("madb_remover_coluna", {
-  description: "Remove uma coluna. FKs de outras tabelas que apontavam para ela também são removidas.",
-  inputSchema: { tabela: z.string(), coluna: z.string(), schema: z.string().optional() },
-}, wrap(async ({ tabela, coluna, schema }) => {
-  const m = load(); const t = findT(m, tabela, schema);
-  if (!t) throw new Error(`Tabela "${tabela}" não existe.`);
-  if (!findC(t, coluna)) throw new Error(`Coluna "${coluna}" não existe.`);
-  t.cols = t.cols.filter((c) => c.name !== coluna);
-  let n = 0;
-  m.tables.forEach((x) => x.cols.forEach((c) => { if (c.ref && c.ref.table === t.name && c.ref.schema === t.schema && c.ref.col === coluna) { c.ref = null; n++; } }));
-  save(m);
-  return txt(`Coluna removida.${n ? ` ${n} FK(s) que apontavam para ela foram removidas.` : ""}`);
-}));
+reg("madb_criar_trigger", "Cria (ou substitui pelo nome) um trigger que chama uma função. Declare a função com madb_criar_funcao para ela sair no SQL.",
+  {
+    tabela: z.string(), schema: SCH, nome: z.string().min(1), momento: z.enum(["BEFORE", "AFTER", "INSTEAD OF"]),
+    eventos: z.array(z.enum(["INSERT", "UPDATE", "DELETE", "TRUNCATE"])).min(1), nivel: z.enum(["ROW", "STATEMENT"]).default("ROW"),
+    funcao: z.string().min(1).describe("Função chamada, ex.: schema.nome_da_funcao"), quando: z.string().optional().describe("Condição WHEN (opcional)"),
+  },
+  mutate((m, a) => {
+    const t = T(m, a.tabela, a.schema);
+    const g = { id: M.newId(m, "trigger", t), name: a.nome, timing: a.momento, events: a.eventos, level: a.nivel, function: a.funcao };
+    if (a.quando) g.when = a.quando;
+    t.triggers = (t.triggers || []).filter((x) => x.name !== a.nome); t.triggers.push(g);
+    return `Trigger ${a.nome} criado em ${M.tname(t)}.`;
+  }));
+reg("madb_remover_trigger", "Remove um trigger pelo nome.", { tabela: z.string(), schema: SCH, nome: z.string() },
+  mutate((m, { tabela, schema, nome }) => {
+    const t = T(m, tabela, schema); const n = (t.triggers || []).length;
+    t.triggers = (t.triggers || []).filter((x) => x.name !== nome);
+    if (t.triggers.length === n) throw new Error(`Trigger "${nome}" não existe em ${M.tname(t)}.`);
+    if (!t.triggers.length) delete t.triggers;
+    return `Trigger ${nome} removido.`;
+  }));
 
-server.registerTool("madb_remover_tabela", {
-  description: "Remove uma tabela. FKs de outras tabelas que apontavam para ela também são removidas.",
-  inputSchema: { tabela: z.string(), schema: z.string().optional() },
-}, wrap(async ({ tabela, schema }) => {
-  const m = load(); const t = findT(m, tabela, schema);
-  if (!t) throw new Error(`Tabela "${tabela}" não existe.`);
-  m.tables = m.tables.filter((x) => x !== t);
-  let n = 0;
-  m.tables.forEach((x) => x.cols.forEach((c) => { if (c.ref && c.ref.table === t.name && c.ref.schema === t.schema) { c.ref = null; n++; } }));
-  save(m);
-  return txt(`Tabela removida.${n ? ` ${n} FK(s) que apontavam para ela foram removidas.` : ""}`);
-}));
+reg("madb_definir_particao", "Define a tabela como particionada (PARTITION BY RANGE|LIST|HASH). Atenção: a PK e os UNIQUEs precisam incluir as colunas de partição. Omita 'metodo' para remover a partição (e suas partições filhas do modelo).",
+  { tabela: z.string(), schema: SCH, metodo: z.enum(["RANGE", "LIST", "HASH"]).optional(), colunas: z.array(z.string()).optional() },
+  mutate((m, { tabela, schema, metodo, colunas }) => {
+    const t = T(m, tabela, schema);
+    if (!metodo) { delete t.partition; delete t.partitions; return `Particionamento removido de ${M.tname(t)}.`; }
+    if (!colunas || !colunas.length) throw new Error("Informe 'colunas' de partição.");
+    t.partition = { by: metodo, cols: colunas.map((n) => C(t, n).id) };
+    return `${M.tname(t)} agora é particionada por ${metodo} (${colunas.join(", ")}).`;
+  }));
+reg("madb_adicionar_particao", "Adiciona (ou substitui pelo nome) uma partição filha. 'limite' é o trecho depois de FOR VALUES: \"FROM ('2026-11-01') TO ('2026-12-01')\", \"IN ('A','B')\", \"WITH (MODULUS 4, REMAINDER 0)\" ou \"DEFAULT\".",
+  { tabela: z.string(), schema: SCH, nome: z.string().min(1), limite: z.string().min(1), schema_particao: z.string().optional() },
+  mutate((m, a) => {
+    const t = T(m, a.tabela, a.schema);
+    if (!t.partition) throw new Error(`${M.tname(t)} não é particionada. Use madb_definir_particao antes.`);
+    const p = { id: M.newId(m, "partition", t), name: a.nome, bound: a.limite };
+    if (a.schema_particao) p.schema = a.schema_particao;
+    t.partitions = (t.partitions || []).filter((x) => x.name !== a.nome); t.partitions.push(p);
+    return `Partição ${a.nome} adicionada a ${M.tname(t)}.`;
+  }));
+reg("madb_remover_particao", "Remove uma partição filha pelo nome.", { tabela: z.string(), schema: SCH, nome: z.string() },
+  mutate((m, { tabela, schema, nome }) => {
+    const t = T(m, tabela, schema); const n = (t.partitions || []).length;
+    t.partitions = (t.partitions || []).filter((x) => x.name !== nome);
+    if (t.partitions.length === n) throw new Error(`Partição "${nome}" não existe em ${M.tname(t)}.`);
+    if (!t.partitions.length) delete t.partitions;
+    return `Partição ${nome} removida.`;
+  }));
 
-server.registerTool("madb_validar", {
-  description: "Valida o modelo: tabela sem PK, nomes duplicados, FK com tipo diferente ou apontando para coluna sem PK/UNIQUE.",
-  inputSchema: {},
-}, wrap(async () => { const w = validar(load()); return txt(w.length ? "Avisos:\n- " + w.join("\n- ") : "Modelo válido: nenhum aviso."); }));
+reg("madb_comentar", "Define o comentário (COMMENT ON) de uma tabela, coluna, schema ou enum. Texto vazio remove.",
+  { alvo: z.enum(["tabela", "coluna", "schema", "enum"]), tabela: z.string().optional(), coluna: z.string().optional(), nome: z.string().optional().describe("Nome do schema ou do enum"), schema: z.string().optional(), texto: z.string() },
+  mutate((m, a) => {
+    const set = (o) => { if (a.texto) o.comment = a.texto; else delete o.comment; };
+    if (a.alvo === "tabela") set(T(m, a.tabela, a.schema));
+    else if (a.alvo === "coluna") set(C(T(m, a.tabela, a.schema), a.coluna));
+    else if (a.alvo === "schema") {
+      let s = m.schemas.find((x) => x.name === a.nome); if (!s) { s = { name: a.nome }; m.schemas.push(s); } set(s);
+    } else {
+      const e = m.enums.find((x) => x.name === a.nome && x.schema === (a.schema || "public")); if (!e) throw new Error(`Enum "${a.nome}" não existe.`); set(e);
+    }
+    return "Comentário atualizado.";
+  }));
 
-server.registerTool("madb_gerar_sql", {
-  description: "Gera o DDL PostgreSQL (CREATE SCHEMA/TABLE, FKs via ALTER TABLE e, opcionalmente, índices nas FKs).",
-  inputSchema: { indices_fk: z.boolean().default(false).describe("Criar índice em cada coluna FK") },
-}, wrap(async ({ indices_fk }) => txt(genSQL(load(), indices_fk))));
+reg("madb_definir_opcoes", "Define opções do modelo. nomenclatura_indices: 'idx' (idx_<tabela>_<colunas>) ou 'ix' (ix_<tabela>__<colunas>) para os índices de FK gerados.",
+  { nomenclatura_indices: z.enum(["idx", "ix"]) },
+  mutate((m, { nomenclatura_indices }) => { m.options = Object.assign({}, m.options, { indexNaming: nomenclatura_indices }); return `Nomenclatura de índices: ${nomenclatura_indices}.`; }));
 
-server.registerTool("madb_gerar_mermaid", {
-  description: "Gera o diagrama ER em Mermaid (erDiagram), para colar em README, wiki ou docs.",
-  inputSchema: {},
-}, wrap(async () => txt("```mermaid\n" + genMMD(load()) + "```")));
+reg("madb_validar", "Valida o modelo e lista erros (SQL inválido ou recusado pelo PostgreSQL) e avisos.", {},
+  read((m) => {
+    const v = M.validate(m);
+    if (!v.errors.length && !v.warnings.length) return "Modelo válido: nenhum erro nem aviso.";
+    let s = "";
+    if (v.errors.length) s += `Erros (${v.errors.length}):\n` + formatErrors(v.errors, 50);
+    if (v.warnings.length) s += `${s ? "\n\n" : ""}Avisos (${v.warnings.length}):\n` + formatErrors(v.warnings, 50);
+    return s;
+  }));
 
-server.registerTool("madb_exportar_json", {
-  description: "Exporta o modelo no formato JSON do site MADB (cole na aba JSON e clique em 'Aplicar JSON' para ver o diagrama).",
-  inputSchema: {},
-}, wrap(async () => txt(JSON.stringify(toMadbJSON(load()), null, 2))));
+function writeOut(p, content) {
+  const f = path.resolve(expand(p));
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f, content);
+  return f;
+}
+reg("madb_gerar_sql", "Gera o DDL PostgreSQL 15+ completo: schemas, enums, funções, tabelas (identity, colunas geradas, partições), PK/UNIQUE, FKs (simples e compostas), índices (parciais, NULLS NOT DISTINCT), CHECKs, comentários e triggers. Com 'salvar_em', grava num arquivo e devolve só um resumo (recomendado para modelos grandes).",
+  { indices_fk: z.boolean().default(false).describe("Criar índice em cada FK"), nomenclatura_indices: z.enum(["idx", "ix"]).optional(), salvar_em: z.string().optional().describe("Caminho do arquivo .sql a gravar") },
+  read((m, { indices_fk, nomenclatura_indices, salvar_em }) => {
+    const sql = M.toSQL(m, { fkIndexes: indices_fk, indexNaming: nomenclatura_indices });
+    const v = M.validate(m);
+    const aviso = v.errors.length ? `\n(Atenção: o modelo tem ${v.errors.length} erro(s); rode madb_validar.)` : "";
+    if (salvar_em) return `SQL gravado em ${writeOut(salvar_em, sql)} (${sql.split("\n").length} linhas).${aviso}`;
+    return sql + aviso;
+  }));
+reg("madb_gerar_mermaid", "Gera o diagrama ER em Mermaid (erDiagram).", {}, read((m) => "```mermaid\n" + M.toMermaid(m) + "```"));
 
-server.registerTool("madb_importar_json", {
-  description: "Substitui o modelo atual por um JSON exportado do site MADB (aba JSON) ou no formato deste MCP.",
-  inputSchema: { json: z.string().describe("Conteúdo JSON completo") },
-}, wrap(async ({ json }) => {
-  const m = fromAnyJSON(JSON.parse(json)); save(m);
-  const w = validar(m);
-  return txt(`Modelo importado: ${m.tables.length} tabela(s).${w.length ? "\n\nAvisos:\n- " + w.join("\n- ") : ""}`);
-}));
+reg("madb_exportar_json", "Exporta o modelo no formato v2 do site MADB. Com 'salvar_em', grava num arquivo (que o site pode abrir ou sincronizar) e devolve só um resumo; sem ele devolve o JSON inteiro (pode ser grande).",
+  { salvar_em: z.string().optional() },
+  read((m, { salvar_em }) => {
+    const json = M.exportJSON(m);
+    if (salvar_em) return `JSON gravado em ${writeOut(salvar_em, json)} (${json.length} caracteres).`;
+    return json;
+  }));
 
-server.registerTool("madb_limpar", {
-  description: "Apaga todo o modelo atual. Só use quando o usuário pedir explicitamente para recomeçar.",
-  inputSchema: {},
-}, wrap(async () => { save({ tables: [] }); return txt("Modelo limpo."); }));
+function importText(text, origem) {
+  const r = M.load(text);
+  if (!r.model || r.errors.length) throw new Error(`Importação cancelada (${origem}). O modelo atual não foi alterado.\n${formatErrors(r.errors, 20)}`);
+  saveModel(r.model, false);
+  const notes = r.notes.length ? "\n\nObservações:\n" + formatErrors(r.notes, 10) : "";
+  const warn = r.warnings.length ? `\n\nAvisos: ${r.warnings.length} (use madb_validar).` : "";
+  return `Modelo importado (${origem}): ${JSON.stringify(M.summary(r.model))}.${notes}${warn}`;
+}
+reg("madb_importar_json", "Substitui o modelo atual por um JSON (formato v2 do site, ou o formato antigo por nomes). Valida antes: se houver erro, nada é alterado e o erro vem legível.",
+  { json: z.string().min(1) },
+  async ({ json }) => { try { return txt(importText(json, "texto")); } catch (e) { return fail(e); } });
+reg("madb_importar_arquivo", "Substitui o modelo atual pelo conteúdo de um arquivo .json no disco (mesmas regras de madb_importar_json).",
+  { caminho: z.string().min(1) },
+  async ({ caminho }) => {
+    try {
+      const f = path.resolve(expand(caminho));
+      if (!fs.existsSync(f)) throw new Error(`Arquivo não encontrado: ${f}`);
+      return txt(importText(fs.readFileSync(f, "utf8"), f));
+    } catch (e) { return fail(e); }
+  });
+
+reg("madb_limpar", "Apaga todo o modelo atual (use só quando o usuário pedir para recomeçar).", {},
+  async () => { try { saveModel(M.emptyModel(), false); return txt("Modelo limpo."); } catch (e) { return fail(e); } });
 
 await server.connect(new StdioServerTransport());

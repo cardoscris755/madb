@@ -8,31 +8,33 @@ O MADB é uma ferramenta web para modelar um banco de dados visualmente: você d
 
 ## Funcionalidades
 
-- **Editor de tabelas e colunas:** nome, tipo, `PRIMARY KEY` (simples ou composta), `NOT NULL`, `UNIQUE` e `DEFAULT`.
-- **Chaves estrangeiras:** escolha a coluna referenciada e a regra `ON DELETE` (`NO ACTION`, `CASCADE`, `SET NULL` ou `RESTRICT`).
-- **Schemas:** cada tabela pode pertencer a um schema; o `CREATE SCHEMA` é gerado automaticamente.
-- **Diagrama ER interativo:** tabelas arrastáveis, linhas de relacionamento com cardinalidade (1 / N), zoom e auto-organização.
+- **Editor de tabelas e colunas:** nome, tipo, `PRIMARY KEY` (simples ou composta), `NOT NULL`, `UNIQUE`, `DEFAULT`, `GENERATED ... AS IDENTITY`, colunas geradas e comentários.
+- **Chaves estrangeiras:** de uma coluna (com `ON DELETE`) ou **compostas**.
+- **Restrições:** `CHECK`, `UNIQUE` composto (com `NULLS NOT DISTINCT`) e FK composta.
+- **Índices:** nome, colunas em ordem (`ASC`/`DESC`, `NULLS FIRST/LAST`), expressões, `UNIQUE`, parciais (`WHERE`) e método.
+- **Enums, funções e schemas** como itens do modelo (chip **⚙ Modelo**), **triggers** e **tabelas particionadas** (`RANGE`/`LIST`/`HASH`) com partições filhas.
+- **Diagrama ER interativo:** tabelas arrastáveis, relacionamentos (inclusive compostos) com cardinalidade, zoom e auto-organização.
 - **Exportação:**
-  - **SQL (DDL):** `CREATE TABLE`, chaves estrangeiras via `ALTER TABLE` e, opcionalmente, índices nas FKs.
-  - **Mermaid:** diagrama `erDiagram`, para colar em documentação, README ou wikis que suportem Mermaid.
-  - **JSON:** salva o modelo completo e permite importá-lo de volta.
-- **Avisos automáticos:** tabela sem PK, nomes duplicados, FK com tipo diferente da coluna referenciada e FK apontando para coluna sem `PRIMARY KEY`/`UNIQUE`.
-- **Várias arquiteturas (áreas de trabalho):** crie quantas quiser, cada uma com suas próprias tabelas e diagrama. Dá para começar do zero ou com o exemplo, alternar pelo seletor do cabeçalho, renomear, duplicar e excluir.
-- **Salvamento local:** todas as arquiteturas ficam guardadas no navegador (`localStorage`) entre uma visita e outra.
+  - **SQL (DDL) para PostgreSQL 15+**, na ordem certa (schemas, enums, funções, tabelas, FKs, índices, CHECKs, comentários, triggers), com índices opcionais nas FKs e duas convenções de nome.
+  - **Mermaid:** diagrama `erDiagram`.
+  - **JSON:** o formato completo do modelo, documentado em [`FORMATO.md`](FORMATO.md). Dá para baixar o `.json`.
+- **Importação de JSON** por **arquivo**, **arrastar e soltar** ou **colar**, sempre validada antes de aplicar. Se houver erro, nada muda e a tela mostra o caminho e o motivo (ex.: `tables[1].cols[1].ref aponta para a tabela "t9", que não existe`). Se a arquitetura atual já tem conteúdo, você escolhe entre criar uma nova arquitetura (padrão) ou substituir.
+- **Arquivo vinculado (Chrome/Edge):** vincule o `modelo.json` do MCP, recarregue com um clique ou ligue a sincronização automática. A barra de origem mostra de onde veio a última alteração. Se o arquivo e a tela mudarem ao mesmo tempo, o site pergunta o que fazer; nada é sobrescrito sem a sua escolha.
+- **Avisos e erros automáticos:** tabela sem PK, FK com tipo diferente, FK para coluna sem PK/UNIQUE, PK de tabela particionada sem a coluna de partição, identity em tipo não inteiro, nomes duplicados e outros.
+- **Várias arquiteturas (áreas de trabalho)** e **salvamento local** no navegador (`localStorage`).
 
 ## Como usar
 
-1. Abra o site (ou o `index.html` localmente).
-2. Para uma ideia nova, clique em **+ Nova arquitetura** no cabeçalho, dê um nome e escolha começar do zero ou com o exemplo. Para voltar a outra, use o seletor **Arquitetura**.
-3. Clique em **+ Nova tabela** e defina o nome.
-4. Adicione colunas com **+ Coluna** e configure tipo, PK, NOT NULL, UNIQUE e DEFAULT.
-5. Para criar um relacionamento, escolha em **sem chave estrangeira** a coluna de destino.
-6. Arraste as tabelas no diagrama para organizar o desenho, ou use **Auto-organizar**.
-7. Na parte de baixo, copie o **SQL**, o **Mermaid** ou o **JSON** com o botão **Copiar**.
+1. Abra o site (ou o `index.html` localmente; precisa do `madb-core.js` ao lado).
+2. Para uma ideia nova, clique em **+ Nova arquitetura**. Para voltar a outra, use o seletor **Arquitetura**.
+3. **+ Nova tabela**, depois **+ Coluna**. Restrições, índices, triggers e particionamento ficam abaixo das colunas; enums, funções e schemas ficam no chip **⚙ Modelo**.
+4. Para um relacionamento simples, escolha o destino em **sem chave estrangeira**; para FK composta, use **+ Restrição** e troque o tipo para *FK composta*.
+5. Na parte de baixo, copie ou baixe o **SQL**, o **Mermaid** ou o **JSON**.
+6. Para abrir um modelo salvo: **Abrir arquivo…**, arraste o `.json` para a página ou cole o texto na aba **JSON** e clique em **Aplicar JSON colado**.
 
-Para reabrir um modelo salvo, cole o JSON na aba **JSON** e clique em **Aplicar JSON**.
+## Integração com o agente (sem copiar e colar)
 
-O exemplo de e-commerce (clientes, produtos, pedidos e itens do pedido) está disponível ao criar uma nova arquitetura.
+O MCP grava o modelo em `~/.madb/modelo.json` (ou onde `MADB_MODELO` apontar) **no mesmo formato do site**. No site, clique em **Vincular arquivo…** e escolha esse arquivo: a página lê o arquivo quando você clica em **Recarregar do arquivo** ou sozinha, com **sincronizar sozinho** ligado. **Gravar no arquivo** manda para o agente o que você mexeu na tela (sempre manual, com confirmação se o arquivo mudou). Funciona em navegadores com a File System Access API (Chrome, Edge); nos demais, use **Abrir arquivo…**. Por que não uma API com token: o site é estático (GitHub Pages), então não há servidor para receber chamadas do agente.
 
 ## MCP do MADB (opcional)
 
@@ -67,42 +69,53 @@ Ou, para um modelo por projeto, crie um `.mcp.json` na raiz do projeto:
 
 Reinicie a sessão do Claude Code depois de configurar. Sem `MADB_MODELO`, o modelo fica em `~/.madb/modelo.json`.
 
-**Ferramentas disponíveis:** `madb_ver_modelo`, `madb_criar_tabela`, `madb_adicionar_coluna`, `madb_definir_fk`, `madb_remover_coluna`, `madb_remover_tabela`, `madb_validar`, `madb_gerar_sql`, `madb_gerar_mermaid`, `madb_exportar_json`, `madb_importar_json` e `madb_limpar`.
+**Ferramentas disponíveis:** tabelas e colunas (`madb_criar_tabela`, `madb_adicionar_coluna`, `madb_definir_fk`, `madb_remover_*`), `madb_criar_enum`, `madb_criar_schema`, `madb_criar_funcao`, `madb_adicionar_restricao` (CHECK, UNIQUE e FK compostas), `madb_criar_indice`, `madb_criar_trigger`, `madb_definir_particao`/`madb_adicionar_particao`, `madb_comentar`, `madb_definir_opcoes`, `madb_validar`, `madb_gerar_sql`, `madb_gerar_mermaid`, `madb_exportar_json`, `madb_importar_json`, `madb_importar_arquivo`, `madb_caminho_modelo`, `madb_ver_modelo` e `madb_limpar`.
 
-**Fluxo sugerido:** peça ao Claude para modelar e validar o banco, peça *"exporte o JSON do madb"*, crie uma nova arquitetura no site, cole o texto na aba **JSON** e clique em **Aplicar JSON**. Mais detalhes em [`mcp/README.md`](mcp/README.md).
+**Fluxo sugerido:** peça ao Claude para modelar e validar o banco; no site, vincule o arquivo do modelo (veja *Integração com o agente*). Sem File System Access API, peça *"exporte o JSON do madb para um arquivo"* e use **Abrir arquivo…**. Mais detalhes em [`mcp/README.md`](mcp/README.md).
 
 ## Executar localmente
 
-Não há dependências, build nem servidor. Basta baixar o repositório e abrir o arquivo `index.html` no navegador.
+Não há build nem servidor. Abra o `index.html` no navegador (ele carrega o `madb-core.js` da mesma pasta). Para as funções de arquivo vinculado, o navegador pode exigir `https://` ou `localhost`; use o site publicado ou `npx serve .`.
+
+## Testes
+
+```
+node --test tests/madb.test.js            # núcleo: importação, validação, SQL, round-trip
+cd mcp && npm install && cd ..
+node --test tests/mcp.test.mjs            # MCP ponta a ponta (cliente do SDK)
+npm i jsdom                               # em qualquer pasta
+JSDOM_PATH=/caminho/node_modules/jsdom node --test tests/site.test.mjs   # site
+```
 
 ## Publicação
 
-O projeto é um site estático de um único arquivo e funciona em qualquer hospedagem estática. A versão atual usa o **GitHub Pages**, com a branch `main` e a pasta raiz como origem. Para atualizar o site, basta alterar o `index.html` no repositório.
+Site estático: `index.html` + `madb-core.js` na raiz da branch `main` (GitHub Pages). **Os dois arquivos precisam ser enviados juntos.** Não coloque modelos reais da empresa no repositório público.
 
 ## Estrutura
 
 ```
 madb/
-├── index.html   # aplicação completa (HTML, CSS e JavaScript)
-├── README.md
-└── mcp/         # servidor MCP local (index.js, package.json, README.md)
+├── index.html      # site (HTML, CSS e JavaScript)
+├── madb-core.js    # núcleo compartilhado: formato, validação, SQL, Mermaid (site e MCP)
+├── FORMATO.md      # documentação do JSON (v2)
+├── exemplos/       # JSONs de exemplo (válido, inválidos, formato antigo)
+├── tests/          # testes
+└── mcp/            # servidor MCP local (index.js, package.json, README.md)
 ```
 
-## Limitações do MVP
+## Limitações
 
-- Os dados (e as arquiteturas) ficam apenas no navegador de quem usa; não há contas, nem banco de dados no servidor, nem compartilhamento entre pessoas.
-- O diagrama é gerado apenas a partir do que você modela; ainda não é possível importar um schema existente (DDL ou conexão com o banco).
-- Não há suporte a índices personalizados, `CHECK`, `ENUM`, views, partições nem migrations entre versões do modelo.
-- A exportação é feita pelo botão **Copiar**; ainda não há download direto de arquivos.
+- Os dados ficam apenas no navegador; não há contas nem compartilhamento entre pessoas.
+- Não há importação de DDL existente nem conexão com banco.
+- Views, domínios, sequences avulsas, RLS, grants e extensões não são modelados.
+- O vínculo com arquivo local depende da File System Access API (Chrome/Edge).
 
 ## Próximos passos
 
-- Download direto de `.sql`, `.json` e imagem (PNG/SVG) do diagrama.
+- Download de imagem (PNG/SVG) do diagrama.
 - Importação de DDL existente.
-- Índices, `CHECK` e `ENUM`.
 - Geração de migrations entre duas versões do modelo.
-- Vários projetos salvos e compartilhamento por link.
 
 ## Tecnologias
 
-HTML, CSS e JavaScript puros (SVG para o diagrama), sem bibliotecas externas.
+HTML, CSS e JavaScript puros (SVG para o diagrama), sem bibliotecas externas no site. MCP em Node.js com `@modelcontextprotocol/sdk` e `zod`.

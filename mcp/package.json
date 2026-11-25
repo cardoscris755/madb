@@ -1,19 +1,12 @@
 {
   "name": "madb-mcp",
-  "version": "0.1.0",
-  "description": "MCP local do MADB: modelagem PostgreSQL, DDL, Mermaid e JSON",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
+  "version": "0.2.0",
+  "description": "MCP local do MADB: modelagem PostgreSQL (enums, CHECKs, FKs compostas, índices, triggers, partições), DDL, Mermaid e JSON compatível com o site",
+  "type": "module",
+  "bin": { "madb-mcp": "index.js" },
   "license": "ISC",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^4.6.7"
-  },
-  "type": "module",
-  "bin": {
-    "madb-mcp": "index.js"
   }
 }

@@ -1,0 +1,33 @@
+{
+  "tables": [
+    {
+      "id": "t1",
+      "name": "a",
+      "schema": "public",
+      "cols": [
+        {
+          "id": "t1c1",
+          "name": "id",
+          "type": "uuid",
+          "pk": true
+        }
+      ]
+    },
+    {
+      "id": "t2",
+      "name": "b",
+      "schema": "public",
+      "cols": [
+        {
+          "id": "t2c1",
+          "name": "a_id",
+          "type": "uuid",
+          "ref": {
+            "t": "t1",
+            "c": "t1c9"
+          }
+        }
+      ]
+    }
+  ]
+}

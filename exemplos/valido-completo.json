@@ -1,0 +1,424 @@
+{
+  "version": 2,
+  "options": {
+    "indexNaming": "ix"
+  },
+  "schemas": [
+    {
+      "name": "vendas",
+      "comment": "Módulo de vendas (exemplo)"
+    }
+  ],
+  "enums": [
+    {
+      "id": "e1",
+      "schema": "vendas",
+      "name": "pedido_status",
+      "values": [
+        "rascunho",
+        "aberto",
+        "pago",
+        "cancelado"
+      ],
+      "comment": "Situação do pedido"
+    }
+  ],
+  "functions": [
+    {
+      "id": "f1",
+      "schema": "vendas",
+      "name": "atualizar_atualizado_em",
+      "sql": "CREATE OR REPLACE FUNCTION vendas.atualizar_atualizado_em() RETURNS trigger AS $$\nBEGIN\n  NEW.atualizado_em = now();\n  RETURN NEW;\nEND;\n$$ LANGUAGE plpgsql;"
+    },
+    {
+      "id": "f2",
+      "schema": "vendas",
+      "name": "bloquear_alteracao",
+      "sql": "CREATE OR REPLACE FUNCTION vendas.bloquear_alteracao() RETURNS trigger AS $$\nBEGIN\n  RAISE EXCEPTION 'Registros de auditoria não podem ser alterados';\nEND;\n$$ LANGUAGE plpgsql;"
+    }
+  ],
+  "tables": [
+    {
+      "id": "t1",
+      "name": "clientes",
+      "schema": "vendas",
+      "x": 40,
+      "y": 40,
+      "comment": "Clientes da loja",
+      "cols": [
+        {
+          "id": "t1c1",
+          "name": "id",
+          "type": "uuid",
+          "pk": true,
+          "nn": true,
+          "uq": false,
+          "def": "gen_random_uuid()",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t1c2",
+          "name": "documento",
+          "type": "varchar(14)",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION",
+          "comment": "CPF (11) ou CNPJ (14), só dígitos"
+        },
+        {
+          "id": "t1c3",
+          "name": "nome",
+          "type": "varchar(150)",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "t1k1",
+          "name": "ck_clientes__documento",
+          "kind": "check",
+          "expr": "documento ~ '^[0-9]{11}([0-9]{3})?$'"
+        }
+      ]
+    },
+    {
+      "id": "t2",
+      "name": "pedidos",
+      "schema": "vendas",
+      "x": 360,
+      "y": 40,
+      "cols": [
+        {
+          "id": "t2c1",
+          "name": "id",
+          "type": "uuid",
+          "pk": true,
+          "nn": true,
+          "uq": false,
+          "def": "gen_random_uuid()",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t2c2",
+          "name": "cliente_id",
+          "type": "uuid",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": {
+            "t": "t1",
+            "c": "t1c1"
+          },
+          "del": "RESTRICT"
+        },
+        {
+          "id": "t2c3",
+          "name": "status",
+          "type": "vendas.pedido_status",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "'rascunho'",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t2c4",
+          "name": "total",
+          "type": "numeric(14,2)",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "0",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t2c5",
+          "name": "atualizado_em",
+          "type": "timestamptz",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "now()",
+          "ref": null,
+          "del": "NO ACTION"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "t2k1",
+          "name": "uq_pedidos__id_cliente",
+          "kind": "unique",
+          "cols": [
+            "t2c1",
+            "t2c2"
+          ]
+        },
+        {
+          "id": "t2k2",
+          "name": "ck_pedidos__total",
+          "kind": "check",
+          "expr": "total >= 0"
+        }
+      ],
+      "indexes": [
+        {
+          "id": "t2i1",
+          "name": "ix_pedidos__abertos",
+          "cols": [
+            {
+              "c": "t2c5",
+              "order": "DESC"
+            }
+          ],
+          "where": "status = 'aberto'"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "t2g1",
+          "name": "tg_pedidos__atualizado_em",
+          "timing": "BEFORE",
+          "events": [
+            "UPDATE"
+          ],
+          "level": "ROW",
+          "function": "vendas.atualizar_atualizado_em"
+        }
+      ]
+    },
+    {
+      "id": "t3",
+      "name": "itens_pedido",
+      "schema": "vendas",
+      "x": 680,
+      "y": 40,
+      "cols": [
+        {
+          "id": "t3c1",
+          "name": "id",
+          "type": "uuid",
+          "pk": true,
+          "nn": true,
+          "uq": false,
+          "def": "gen_random_uuid()",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t3c2",
+          "name": "pedido_id",
+          "type": "uuid",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t3c3",
+          "name": "cliente_id",
+          "type": "uuid",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t3c4",
+          "name": "sku",
+          "type": "varchar(40)",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t3c5",
+          "name": "quantidade",
+          "type": "integer",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t3c6",
+          "name": "preco_unit",
+          "type": "numeric(14,2)",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t3c7",
+          "name": "subtotal",
+          "type": "numeric(14,2)",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION",
+          "generated": "quantidade * preco_unit",
+          "comment": "Calculado pelo banco"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "t3k1",
+          "name": "fk_itens__pedido_cliente",
+          "kind": "fk",
+          "cols": [
+            "t3c2",
+            "t3c3"
+          ],
+          "ref": {
+            "t": "t2",
+            "cols": [
+              "t2c1",
+              "t2c2"
+            ]
+          },
+          "del": "CASCADE"
+        },
+        {
+          "id": "t3k2",
+          "name": "ck_itens__quantidade",
+          "kind": "check",
+          "expr": "quantidade > 0"
+        }
+      ],
+      "indexes": [
+        {
+          "id": "t3i1",
+          "name": "uq_itens__pedido_sku",
+          "unique": true,
+          "nullsNotDistinct": true,
+          "cols": [
+            {
+              "c": "t3c2"
+            },
+            {
+              "c": "t3c4"
+            }
+          ],
+          "where": "quantidade > 0"
+        }
+      ]
+    },
+    {
+      "id": "t4",
+      "name": "auditorias",
+      "schema": "vendas",
+      "x": 40,
+      "y": 340,
+      "comment": "Log imutável, particionado por mês",
+      "cols": [
+        {
+          "id": "t4c1",
+          "name": "id",
+          "type": "bigint",
+          "pk": true,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION",
+          "identity": "ALWAYS"
+        },
+        {
+          "id": "t4c2",
+          "name": "criado_em",
+          "type": "timestamptz",
+          "pk": true,
+          "nn": true,
+          "uq": false,
+          "def": "now()",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t4c3",
+          "name": "tabela",
+          "type": "varchar(80)",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t4c4",
+          "name": "dados",
+          "type": "jsonb",
+          "pk": false,
+          "nn": false,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION"
+        }
+      ],
+      "partition": {
+        "by": "RANGE",
+        "cols": [
+          "t4c2"
+        ]
+      },
+      "partitions": [
+        {
+          "id": "t4p1",
+          "name": "auditorias_2026_11",
+          "bound": "FROM ('2026-11-01') TO ('2026-12-01')"
+        },
+        {
+          "id": "t4p2",
+          "name": "auditorias_2026_12",
+          "bound": "FROM ('2026-12-01') TO ('2027-01-01')"
+        },
+        {
+          "id": "t4p3",
+          "name": "auditorias_default",
+          "bound": "DEFAULT"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "t4g1",
+          "name": "tg_auditorias__imutavel",
+          "timing": "BEFORE",
+          "events": [
+            "UPDATE",
+            "DELETE"
+          ],
+          "level": "ROW",
+          "function": "vendas.bloquear_alteracao"
+        }
+      ]
+    }
+  ]
+}

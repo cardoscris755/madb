@@ -2,7 +2,7 @@
 
 Servidor [MCP](https://modelcontextprotocol.io) local do **MADB**, a ferramenta de modelagem de bancos PostgreSQL com diagrama ER.
 
-Com ele, o Claude (Claude Code ou Claude Desktop) modela o banco por conversa: cria tabelas, colunas e chaves estrangeiras, valida o modelo e gera **SQL (DDL)**, **diagrama Mermaid** e o **JSON** que o site MADB importa para mostrar o diagrama.
+Com ele, o Claude (Claude Code ou Claude Desktop) modela o banco por conversa: cria tabelas, colunas, chaves estrangeiras (inclusive compostas), enums, CHECKs, índices, triggers e partições, valida o modelo e gera **SQL (DDL) PostgreSQL 15+**, **diagrama Mermaid** e o **JSON** do site MADB. O modelo fica num arquivo no **mesmo formato do site** ([`FORMATO.md`](../FORMATO.md)), então o site pode vinculá-lo e sincronizar sem copiar e colar.
 
 - Site: https://cardoscris755.github.io/madb/
 - Roda localmente, em stdio, sem custo e sem conta.
@@ -79,96 +79,74 @@ Feche e abra o Claude Desktop de novo.
 | Padrão | `~/.madb/modelo.json` (pasta do seu usuário) |
 | Com `MADB_MODELO` | o caminho que você definir |
 
-Use um arquivo por projeto para manter modelos separados e versioná-los no Git. Prefira caminhos **absolutos** em `MADB_MODELO`.
+Use um arquivo por projeto para manter modelos separados. Prefira caminhos **absolutos** em `MADB_MODELO`. A ferramenta `madb_caminho_modelo` mostra qual arquivo está em uso.
+
+**Atualização da v0.1:** se o arquivo existente estiver no formato antigo (por nomes), ele é lido, convertido para o formato v2 na primeira alteração e uma cópia fica em `modelo.json.bak-v1`.
+
+O servidor precisa do `madb-core.js` (na pasta acima de `mcp/`, ou ao lado do `index.js`). Se você copiar só a pasta `mcp`, copie também esse arquivo.
 
 ## Ferramentas
 
 | Ferramenta | O que faz |
 |---|---|
-| `madb_ver_modelo` | Mostra tabelas, colunas, PKs e FKs do modelo atual |
-| `madb_criar_tabela` | Cria (ou substitui) uma tabela com colunas, PK, NOT NULL, UNIQUE, DEFAULT e FK |
-| `madb_adicionar_coluna` | Adiciona ou substitui uma coluna em uma tabela existente |
-| `madb_definir_fk` | Define ou remove a chave estrangeira de uma coluna (com `ON DELETE`) |
-| `madb_remover_coluna` | Remove uma coluna e as FKs que apontavam para ela |
-| `madb_remover_tabela` | Remove uma tabela e as FKs que apontavam para ela |
-| `madb_validar` | Aponta problemas no modelo (veja abaixo) |
-| `madb_gerar_sql` | Gera o DDL PostgreSQL; opção `indices_fk` cria índice em cada FK |
-| `madb_gerar_mermaid` | Gera o diagrama ER em Mermaid (`erDiagram`) |
-| `madb_exportar_json` | Exporta no formato do site MADB |
-| `madb_importar_json` | Importa um JSON exportado pelo site MADB (substitui o modelo atual) |
+| `madb_ver_modelo` / `madb_caminho_modelo` | Mostra o modelo em texto / o caminho do arquivo |
+| `madb_criar_tabela` | Cria (ou atualiza) uma tabela com colunas, PK, NOT NULL, UNIQUE, DEFAULT, FK, `identity`, coluna `gerada` e comentário |
+| `madb_adicionar_coluna`, `madb_remover_coluna`, `madb_remover_tabela` | Edição de colunas e tabelas (limpam FKs, restrições e índices que dependiam do que saiu) |
+| `madb_definir_fk` | FK de uma coluna (com `ON DELETE`), ou remove |
+| `madb_criar_schema` | Declara um schema com comentário |
+| `madb_criar_enum`, `madb_remover_enum` | Enums nomeados; use `schema.nome` como tipo de coluna |
+| `madb_criar_funcao`, `madb_remover_funcao` | Funções (`CREATE OR REPLACE FUNCTION ...`) usadas por triggers |
+| `madb_adicionar_restricao`, `madb_remover_restricao` | `check`, `unique` (composto, `NULLS NOT DISTINCT`) e `fk` composta |
+| `madb_criar_indice`, `madb_remover_indice` | Índices com ordem, expressões, `UNIQUE`, `WHERE`, método e `NULLS NOT DISTINCT` |
+| `madb_criar_trigger`, `madb_remover_trigger` | Triggers que chamam uma função |
+| `madb_definir_particao`, `madb_adicionar_particao`, `madb_remover_particao` | Tabela particionada (`RANGE`/`LIST`/`HASH`) e partições filhas |
+| `madb_comentar` | `COMMENT ON` de tabela, coluna, schema ou enum |
+| `madb_definir_opcoes` | Convenção dos índices de FK: `idx` ou `ix` |
+| `madb_validar` | Erros e avisos (veja [`FORMATO.md`](../FORMATO.md)) |
+| `madb_gerar_sql` | DDL completo; `indices_fk` cria índice em cada FK; `salvar_em` grava num `.sql` e devolve só um resumo |
+| `madb_gerar_mermaid` | Diagrama `erDiagram` |
+| `madb_exportar_json` | JSON v2; `salvar_em` grava num arquivo |
+| `madb_importar_json`, `madb_importar_arquivo` | Substituem o modelo por um JSON (texto ou arquivo). Validam antes: com erro, nada muda e o erro vem com caminho e motivo |
 | `madb_limpar` | Apaga o modelo atual |
 
 ### Campos de uma coluna
 
-Usados em `madb_criar_tabela` e `madb_adicionar_coluna`.
-
-| Campo | Tipo | Padrão | Descrição |
-|---|---|---|---|
-| `nome` | texto | | Nome da coluna |
-| `tipo` | texto | `text` | Tipo PostgreSQL, ex.: `bigserial`, `varchar(120)`, `numeric(12,2)`, `timestamptz`, `uuid`, `jsonb` |
-| `pk` | booleano | `false` | Chave primária. Várias colunas com `pk` formam uma PK composta |
-| `nn` | booleano | `false` | `NOT NULL` (implícito na PK) |
-| `uq` | booleano | `false` | `UNIQUE` |
-| `padrao` | texto | vazio | Expressão `DEFAULT`, ex.: `now()`, `0`, `'aberto'` |
-| `ref` | texto | | Chave estrangeira no formato `tabela.coluna` ou `schema.tabela.coluna` |
-| `on_delete` | texto | `NO ACTION` | `NO ACTION`, `CASCADE`, `SET NULL` ou `RESTRICT` |
-
-### Validações (`madb_validar`)
-
-- tabela sem colunas ou sem chave primária;
-- tabelas ou colunas com nomes duplicados;
-- FK com tipo diferente da coluna referenciada (`serial` e `bigserial` são tratados como `integer` e `bigint`);
-- FK apontando para coluna sem `PRIMARY KEY` ou `UNIQUE` (o PostgreSQL recusaria);
-- FK que aponta para algo que não existe mais;
-- `ON DELETE SET NULL` em coluna `NOT NULL` ou PK.
+| Campo | Padrão | Descrição |
+|---|---|---|
+| `nome` | | Nome da coluna |
+| `tipo` | `text` | Tipo PostgreSQL ou enum (`schema.nome`) |
+| `pk` / `nn` / `uq` | `false` | Chave primária (várias = PK composta), NOT NULL, UNIQUE |
+| `padrao` | vazio | Expressão `DEFAULT` |
+| `ref` | | `"tabela.coluna"` ou `"schema.tabela.coluna"`; a tabela de destino precisa existir antes |
+| `on_delete` | `NO ACTION` | `NO ACTION`, `CASCADE`, `SET NULL`, `RESTRICT` |
+| `identity` | | `ALWAYS` ou `BY DEFAULT` |
+| `gerada` | | Expressão de coluna gerada |
+| `comentario` | | `COMMENT ON COLUMN` |
 
 ## Exemplo de uso
 
-Peça ao Claude, por exemplo:
+> *"Crie o schema vendas com o enum pedido_status (aberto, pago, cancelado), as tabelas clientes e pedidos, um CHECK de total >= 0 e um índice único parcial em pedidos (cliente_id) onde status = 'aberto'. Valide e gere o SQL."*
 
-> Use o madb para modelar um banco de controle de estoque com produtos, fornecedores e movimentações. Valide e gere o SQL com índices nas FKs.
-
-O Claude chama as ferramentas na ordem (tabelas-pai primeiro), valida e devolve o DDL. Exemplo de saída:
-
-```sql
-CREATE TABLE clientes (
-  id bigserial PRIMARY KEY,
-  email varchar(255) NOT NULL UNIQUE
-);
-
-CREATE TABLE pedidos (
-  id bigserial PRIMARY KEY,
-  cliente_id bigint NOT NULL
-);
-
--- Chaves estrangeiras
-ALTER TABLE pedidos
-  ADD CONSTRAINT pedidos_cliente_id_fkey FOREIGN KEY (cliente_id)
-  REFERENCES clientes (id) ON DELETE RESTRICT;
-```
+O Claude chama `madb_criar_enum`, `madb_criar_tabela`, `madb_adicionar_restricao`, `madb_criar_indice`, `madb_validar` e `madb_gerar_sql`.
 
 ## Levar o modelo para o site MADB
 
-1. Peça ao Claude: *"exporte o JSON do madb"*.
-2. No site, crie uma nova arquitetura (**+ Nova arquitetura**, começando do zero).
-3. Abra a aba **JSON**, cole o texto e clique em **Aplicar JSON**.
+1. No site, clique em **Vincular arquivo…** e escolha o arquivo do modelo (veja `madb_caminho_modelo`). Use **Recarregar do arquivo** ou **sincronizar sozinho**.
+2. Sem File System Access API (Firefox, Safari): peça `madb_exportar_json` com `salvar_em`, e use **Abrir arquivo…** ou arraste o `.json` para a página.
 
-O diagrama aparece organizado em grade, e você pode arrastar as tabelas. O caminho inverso também funciona: copie o JSON da aba **JSON** do site e use `madb_importar_json`.
-
-> **Atenção:** tanto o **Aplicar JSON** do site quanto o `madb_importar_json` **substituem** o conteúdo atual. Crie uma nova arquitetura antes de colar, para não sobrescrever uma existente.
+O site nunca sobrescreve alterações suas sem perguntar, e o botão **Gravar no arquivo** é sempre manual.
 
 ## Observações
 
-- **Ordem de criação:** a tabela referenciada precisa existir antes da FK. Crie as tabelas-pai primeiro, ou use `madb_definir_fk` depois.
-- **Auto-referência** (ex.: `pedidos.pai_id → pedidos.id`) funciona no formato `tabela.coluna`.
-- **Substituição:** `madb_criar_tabela` com um nome já existente substitui a tabela inteira.
-- **Remoção em cascata no modelo:** ao remover uma tabela ou coluna, as FKs que apontavam para ela são removidas também.
-- O modelo do MCP e as arquiteturas do site são independentes: o site guarda os dados no navegador, e o MCP, em um arquivo.
+- O servidor **não conecta a nenhum banco**: só lê e grava o arquivo do modelo.
+- Para modelos grandes, use `salvar_em` em `madb_gerar_sql` e `madb_exportar_json` para não despejar o conteúdo na conversa.
+- Não deixe modelos reais da empresa em repositório público.
 
 ## Solução de problemas
 
 | Sintoma | O que fazer |
 |---|---|
+| `madb-core.js não encontrado` | Copie o `madb-core.js` para a pasta acima de `mcp/` (raiz do repositório) |
 | `node não é reconhecido` | Instale o Node.js e abra um terminal novo |
 | `madb` não aparece em `/mcp` | Confira o caminho do `index.js`, use `\\` no JSON e reinicie a sessão |
 | Erro ao subir o servidor | Rode `node index.js` na pasta e leia a mensagem. Quase sempre faltou o `npm install` |
@@ -179,11 +157,16 @@ O diagrama aparece organizado em grade, e você pode arrastar as tabelas. O cami
 
 ```
 mcp/
-├── index.js        # servidor MCP (stdio)
+├── index.js        # servidor MCP
 ├── package.json
 └── README.md
+../madb-core.js     # núcleo compartilhado (formato, validação, SQL, Mermaid)
 ```
+
+## Testes
+
+`node --test tests/mcp.test.mjs` (na raiz do repositório, depois de `npm install` em `mcp/`).
 
 ## Tecnologias
 
-Node.js (ES modules), [`@modelcontextprotocol/sdk`](https://www.npmjs.com/package/@modelcontextprotocol/sdk) e [`zod`](https://www.npmjs.com/package/zod).
+Node.js (ESM), `@modelcontextprotocol/sdk`, `zod`.

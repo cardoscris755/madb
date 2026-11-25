@@ -103,6 +103,31 @@ textarea.code{flex:1;width:100%;border:none;border-radius:0;background:var(--cod
   aside{border-right:none;border-bottom:1px solid var(--line);max-height:46vh}
   .out{height:260px}
 }
+
+.warns{max-height:110px}
+.warns .er{color:var(--danger)}
+.statusbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:5px 16px;background:var(--panel2);border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
+.statusbar b{color:var(--text);font-weight:600}
+.statusbar .spacer{flex:1}
+.statusbar label{display:flex;gap:4px;align-items:center}
+.chip.mod{border-style:dashed}
+.sub{border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px;background:var(--panel2)}
+.sub .r{display:flex;gap:5px;margin-bottom:5px;align-items:center;flex-wrap:wrap}
+.sub .r>input[type=text],.sub .r>select{flex:1;min-width:80px}
+.sub .r label{display:flex;gap:3px;align-items:center;font-size:12px;cursor:pointer}
+.sub textarea{width:100%;min-height:60px;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;margin-bottom:5px}
+.bad{color:var(--danger);font-size:12px;display:block;margin:-2px 0 5px}
+details.more{margin-top:6px}
+details.more summary{cursor:pointer;font-size:12px;color:var(--muted)}
+details.more .r{margin-top:6px}
+.imp{border-bottom:1px solid var(--line);background:var(--panel);font-size:12px;max-height:150px;overflow:auto;padding:6px 12px}
+.imp[hidden]{display:none}
+.imp .er{color:var(--danger)}.imp .wr{color:var(--warn)}.imp .ok{color:var(--fk)}
+.imp code{font:11.5px ui-monospace,Menlo,Consolas,monospace;background:var(--panel2);padding:0 4px;border-radius:3px}
+.imp .x{float:right}
+.dropov{position:fixed;inset:0;z-index:60;background:rgba(47,93,158,.82);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;border:4px dashed #fff;margin:10px;border-radius:14px;pointer-events:none}
+.dropov[hidden]{display:none}
+.modal{width:min(480px,100%)}
 </style>
 </head>
 <body>
@@ -128,6 +153,17 @@ textarea.code{flex:1;width:100%;border:none;border-radius:0;background:var(--cod
     <div class="mact"><button id="mCancel">Cancelar</button><button id="mOk" class="primary">OK</button></div>
   </div>
 </div>
+<div class="statusbar" id="status">
+  <span id="origin">Origem: edição local</span>
+  <span class="spacer"></span>
+  <button class="sm" id="bOpen" title="Escolher um arquivo .json (ou arraste-o para a página)">Abrir arquivo…</button>
+  <button class="sm" id="bLink" hidden>Vincular arquivo…</button>
+  <button class="sm" id="bReload" hidden>Recarregar do arquivo</button>
+  <button class="sm" id="bSave" hidden>Gravar no arquivo</button>
+  <label id="autoW" hidden><input type="checkbox" id="optAuto"> sincronizar sozinho</label>
+  <input type="file" id="fileIn" accept=".json,application/json" hidden>
+</div>
+<div class="dropov" id="dropov" hidden>Solte o arquivo .json para importar</div>
 <main>
   <aside>
     <div class="sec">Tabelas <span class="spacer"></span><button class="sm primary" id="bAddT">+ Nova tabela</button></div>
@@ -153,15 +189,22 @@ textarea.code{flex:1;width:100%;border:none;border-radius:0;background:var(--cod
         <button class="tab" data-t="json">JSON</button>
         <div class="spacer"></div>
         <div class="acts">
-          <label class="opt" id="optIdxW"><input type="checkbox" id="optIdx"> índices nas FKs</label>
-          <button class="sm" id="bApply" style="display:none">Aplicar JSON</button>
+          <span id="optIdxW" style="display:flex;gap:8px;align-items:center">
+            <label class="opt"><input type="checkbox" id="optIdx"> índices nas FKs</label>
+            <label class="opt">nomes <select id="optNaming"><option value="idx">idx_tabela_col</option><option value="ix">ix_tabela__col</option></select></label>
+          </span>
+          <button class="sm" id="bDown" style="display:none">Baixar .json</button>
+          <button class="sm" id="bApply" style="display:none">Aplicar JSON colado</button>
           <button class="sm primary" id="bCopy">Copiar</button>
         </div>
       </div>
+      <div class="imp" id="imp" hidden></div>
       <textarea class="code" id="code" spellcheck="false" readonly></textarea>
     </div>
   </div>
 </main>
+<script src="madb-core.js"></script>
+<datalist id="fns"></datalist>
 <datalist id="types">
   <option>serial</option><option>bigserial</option><option>smallint</option><option>integer</option><option>bigint</option>
   <option>numeric(12,2)</option><option>real</option><option>double precision</option><option>boolean</option>
@@ -170,61 +213,125 @@ textarea.code{flex:1;width:100%;border:none;border-radius:0;background:var(--cod
   <option>bytea</option><option>inet</option><option>integer[]</option><option>text[]</option>
 </datalist>
 <script>
+'use strict';
 const W=230,HH=34,RH=22;
-let S={tables:[]},sel=null,zoom=1,tab='sql',idN=0;
-const nid=()=>'i'+(++idN)+Math.random().toString(36).slice(2,6);
+const DEL=MADB.DEL_ACTIONS;
+let S=MADB.emptyModel(),sel=null,zoom=1,tab='sql';
+let idN=0;const nid=()=>'w'+Date.now().toString(36)+(++idN)+Math.random().toString(36).slice(2,5);
 const $=s=>document.querySelector(s);
-const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const tOf=id=>S.tables.find(t=>t.id===id);
-const cOf=(t,id)=>t&&t.cols.find(c=>c.id===id);
-const RES=new Set(['user','order','group','table','select','column','check','default','end','from','to','limit','offset','primary','references','unique','desc','asc','all','analyse','analyze','both','case','cast','create','current_user','distinct','do','else','for','grant','having','in','into','leading','not','null','on','only','or','placing','some','then','trailing','union','using','when','where','with']);
-const q=n=>(/^[a-z_][a-z0-9_]*$/.test(n)&&!RES.has(n))?n:'"'+String(n).replace(/"/g,'""')+'"';
-const qt=t=>(t.schema&&t.schema!=='public'?q(t.schema)+'.':'')+q(t.name);
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tOf=id=>MADB.tableById(S,id);
+const cOf=(t,id)=>MADB.colById(t,id);
+const baseType=MADB.baseType;
+const MODEL='__model';
+const drafts={};   // textos digitados que ainda não viraram dados válidos
+const BASE_TYPES=$('#types').innerHTML;
 
-function mkCol(name,type,o={}){return Object.assign({id:nid(),name,type,pk:false,nn:false,uq:false,def:'',ref:null,del:'NO ACTION'},o)}
-function mkTable(name,x,y,cols,schema='public'){return {id:nid(),name,schema,x,y,cols}}
-
+/* ---------- criação ---------- */
+function mkTable(name,x,y,schema){const t={id:MADB.newId(S,'table'),name,schema:schema||'public',x,y,cols:[]};S.tables.push(t);return t}
+function mkCol(t,name,type,o){const c=Object.assign({id:MADB.newId(S,'col',t),name,type,pk:false,nn:false,uq:false,def:'',ref:null,del:'NO ACTION'},o||{});t.cols.push(c);return c}
 function sample(){
-  const cli=mkTable('clientes',40,40,[
-    mkCol('id','bigserial',{pk:true}),mkCol('nome','varchar(120)',{nn:true}),
-    mkCol('email','varchar(255)',{nn:true,uq:true}),mkCol('criado_em','timestamptz',{nn:true,def:'now()'})]);
-  const prod=mkTable('produtos',40,260,[
-    mkCol('id','bigserial',{pk:true}),mkCol('sku','varchar(40)',{nn:true,uq:true}),
-    mkCol('descricao','text'),mkCol('preco','numeric(12,2)',{nn:true,def:'0'}),mkCol('ativo','boolean',{nn:true,def:'true'})]);
-  const ped=mkTable('pedidos',380,40,[
-    mkCol('id','bigserial',{pk:true}),mkCol('cliente_id','bigint',{nn:true,ref:{t:cli.id,c:cli.cols[0].id},del:'RESTRICT'}),
-    mkCol('status','varchar(20)',{nn:true,def:"'aberto'"}),mkCol('total','numeric(12,2)',{nn:true,def:'0'}),
-    mkCol('criado_em','timestamptz',{nn:true,def:'now()'})]);
-  const it=mkTable('itens_pedido',380,300,[
-    mkCol('pedido_id','bigint',{pk:true,nn:true,ref:{t:ped.id,c:ped.cols[0].id},del:'CASCADE'}),
-    mkCol('produto_id','bigint',{pk:true,nn:true,ref:{t:prod.id,c:prod.cols[0].id},del:'RESTRICT'}),
-    mkCol('quantidade','integer',{nn:true,def:'1'}),mkCol('preco_unit','numeric(12,2)',{nn:true})]);
-  return {tables:[cli,prod,ped,it]};
+  S=MADB.emptyModel();
+  const cli=mkTable('clientes',40,40),prod=mkTable('produtos',40,260),ped=mkTable('pedidos',380,40),it=mkTable('itens_pedido',380,300);
+  const cid=mkCol(cli,'id','bigint',{pk:true,nn:true,identity:'ALWAYS'});mkCol(cli,'nome','varchar(120)',{nn:true});
+  mkCol(cli,'email','varchar(255)',{nn:true,uq:true});mkCol(cli,'criado_em','timestamptz',{nn:true,def:'now()'});
+  const pid=mkCol(prod,'id','bigint',{pk:true,nn:true,identity:'ALWAYS'});mkCol(prod,'sku','varchar(40)',{nn:true,uq:true});
+  mkCol(prod,'descricao','text');mkCol(prod,'preco','numeric(12,2)',{nn:true,def:'0'});mkCol(prod,'ativo','boolean',{nn:true,def:'true'});
+  const oid=mkCol(ped,'id','bigint',{pk:true,nn:true,identity:'ALWAYS'});
+  mkCol(ped,'cliente_id','bigint',{nn:true,ref:{t:cli.id,c:cid.id},del:'RESTRICT'});
+  mkCol(ped,'status','varchar(20)',{nn:true,def:"'aberto'"});mkCol(ped,'total','numeric(12,2)',{nn:true,def:'0'});
+  mkCol(ped,'criado_em','timestamptz',{nn:true,def:'now()'});
+  mkCol(it,'pedido_id','bigint',{pk:true,nn:true,ref:{t:ped.id,c:oid.id},del:'CASCADE'});
+  mkCol(it,'produto_id','bigint',{pk:true,nn:true,ref:{t:prod.id,c:pid.id},del:'RESTRICT'});
+  mkCol(it,'quantidade','integer',{nn:true,def:'1'});mkCol(it,'preco_unit','numeric(12,2)',{nn:true});
+  it.constraints=[{id:MADB.newId(S,'constraint',it),name:'ck_itens_pedido__quantidade',kind:'check',expr:'quantidade > 0'}];
+  return S;
 }
+
+/* ---------- listas de colunas em texto ---------- */
+const colNames=(t,ids)=>ids.map(i=>{const c=cOf(t,i);return c?c.name:'?'}).join(', ');
+function parseColList(t,text){
+  const names=String(text).split(',').map(x=>x.trim()).filter(Boolean),ids=[],bad=[];
+  names.forEach(n=>{const c=t.cols.find(c=>c.name===n);if(c)ids.push(c.id);else bad.push(n)});
+  if(!names.length)bad.push('(vazio)');
+  return {ids,bad};
+}
+function splitTop(s){const out=[];let d=0,cur='';for(const ch of s){if(ch==='(')d++;if(ch===')')d--;if(ch===','&&d===0){out.push(cur);cur=''}else cur+=ch}out.push(cur);return out.map(x=>x.trim()).filter(Boolean)}
+function parseIdxCols(t,text){
+  const cols=[],bad=[];
+  splitTop(text).forEach(tok=>{
+    if(tok.startsWith('(')&&tok.endsWith(')')){cols.push({expr:tok.slice(1,-1).trim()});return}
+    const m=tok.match(/^(\S+?)(?:\s+(ASC|DESC))?(?:\s+NULLS\s+(FIRST|LAST))?$/i);
+    const c=m&&t.cols.find(c=>c.name===m[1]);
+    if(!c){bad.push(tok);return}
+    const e={c:c.id};if(m[2])e.order=m[2].toUpperCase();if(m[3])e.nulls=m[3].toUpperCase();cols.push(e);
+  });
+  if(!cols.length&&!bad.length)bad.push('(vazio)');
+  return {cols,bad};
+}
+const fmtIdxCols=(t,cols)=>cols.map(e=>e.expr?`(${e.expr})`:(cOf(t,e.c)?cOf(t,e.c).name:'?')+(e.order?' '+e.order:'')+(e.nulls?' NULLS '+e.nulls:'')).join(', ');
+const dv=(key,fallback)=>key in drafts?drafts[key]:fallback;
 
 /* ---------- editor ---------- */
 function renderChips(){
-  $('#chips').innerHTML=S.tables.map(t=>`<span class="chip ${t.id===sel?'on':''}" data-id="${t.id}">${esc(t.name||'(sem nome)')}</span>`).join('')||'<span class="empty">Nenhuma tabela ainda.</span>';
+  $('#chips').innerHTML=`<span class="chip mod ${sel===MODEL?'on':''}" data-id="${MODEL}" title="Schemas, enums, funções e opções do modelo">⚙ Modelo</span>`+
+    S.tables.map(t=>`<span class="chip ${t.id===sel?'on':''}" data-id="${t.id}">${esc(t.name||'(sem nome)')}</span>`).join('');
 }
 function refOptions(t,c){
   let o=`<option value="">— sem chave estrangeira —</option>`;
-  S.tables.forEach(x=>{ if(x.id===t.id)return; x.cols.forEach(y=>{
+  S.tables.forEach(x=>{ if(x.id===t.id&&false)return; x.cols.forEach(y=>{
+    if(x.id===t.id&&y.id===c.id)return;
     const v=x.id+'|'+y.id, on=c.ref&&c.ref.t===x.id&&c.ref.c===y.id;
     o+=`<option value="${v}" ${on?'selected':''}>→ ${esc(x.name)}.${esc(y.name)}${y.pk?' (PK)':''}</option>`;});});
   return o;
 }
-function renderEditor(){
-  renderChips();
-  const t=tOf(sel), ed=$('#editor');
-  if(!t){ed.innerHTML='<div class="empty">Crie ou selecione uma tabela para editar.</div>';return}
-  ed.innerHTML=`
-  <div class="sec">Tabela</div>
-  <div class="row"><label>Nome</label><input type="text" data-f="tname" value="${esc(t.name)}"></div>
-  <div class="row"><label>Schema</label><input type="text" data-f="tschema" value="${esc(t.schema)}">
-    <button class="sm danger" data-a="delT">Excluir tabela</button></div>
-  <div class="sec" style="margin-top:14px">Colunas <span class="spacer"></span><button class="sm primary" data-a="addC">+ Coluna</button></div>
-  ${t.cols.map(c=>`
-  <div class="col" data-cid="${c.id}">
+const optList=(arr,v)=>arr.map(x=>`<option ${x===v?'selected':''}>${esc(x)}</option>`).join('');
+function updateDatalists(){
+  $('#types').innerHTML=BASE_TYPES+S.enums.map(e=>`<option>${esc(e.schema==='public'?e.name:e.schema+'.'+e.name)}</option>`).join('');
+  $('#fns').innerHTML=S.functions.map(f=>`<option>${esc(f.schema+'.'+f.name)}</option>`).join('');
+}
+function conHTML(t,k){
+  const d=(f,v)=>esc(dv(k.id+':'+f,v)), bad=drafts[k.id+':bad']?`<span class="bad">${esc(drafts[k.id+':bad'])}</span>`:'';
+  let b='';
+  if(k.kind==='check')b=`<div class="r"><input type="text" data-f="cexpr" value="${esc(k.expr||'')}" placeholder="expressão, ex.: quantidade > 0"></div>`;
+  else if(k.kind==='unique')b=`<div class="r"><input type="text" data-f="ccols" value="${d('ccols',colNames(t,k.cols))}" placeholder="colunas, separadas por vírgula"><label><input type="checkbox" data-f="cnnd" ${k.nullsNotDistinct?'checked':''}>NULLS NOT DISTINCT</label></div>${bad}`;
+  else{
+    const rt=tOf(k.ref.t);
+    b=`<div class="r"><input type="text" data-f="ccols" value="${d('ccols',colNames(t,k.cols))}" placeholder="colunas desta tabela"></div>
+    <div class="r"><select data-f="creft">${S.tables.map(x=>`<option value="${x.id}" ${x.id===k.ref.t?'selected':''}>→ ${esc(x.name)}</option>`).join('')}</select>
+      <input type="text" data-f="crefcols" value="${d('crefcols',rt?colNames(rt,k.ref.cols):'')}" placeholder="colunas referenciadas">
+      <select data-f="cdel" title="ON DELETE">${optList(DEL,k.del)}</select></div>${bad}`;
+  }
+  return `<div class="sub" data-k="con" data-id="${k.id}"><div class="r"><select data-f="ckind">${['check','unique','fk'].map(x=>`<option value="${x}" ${x===k.kind?'selected':''}>${x==='fk'?'FK composta':x.toUpperCase()}</option>`).join('')}</select>
+    <input type="text" data-f="cname" value="${esc(k.name||'')}" placeholder="nome da restrição"><button class="sm danger" data-a="delK" title="Remover">✕</button></div>${b}</div>`;
+}
+function idxHTML(t,x){
+  const bad=drafts[x.id+':bad']?`<span class="bad">${esc(drafts[x.id+':bad'])}</span>`:'';
+  return `<div class="sub" data-k="idx" data-id="${x.id}"><div class="r"><input type="text" data-f="iname" value="${esc(x.name)}" placeholder="nome do índice"><button class="sm danger" data-a="delI" title="Remover">✕</button></div>
+  <div class="r"><input type="text" data-f="icols" value="${esc(dv(x.id+':icols',fmtIdxCols(t,x.cols)))}" placeholder="colunas: a, b DESC NULLS LAST, (lower(c))"></div>${bad}
+  <div class="r"><input type="text" data-f="iwhere" value="${esc(x.where||'')}" placeholder="WHERE (índice parcial)">
+    <input type="text" data-f="imethod" value="${esc(x.method||'')}" placeholder="método (btree)" style="max-width:110px"></div>
+  <div class="r"><label><input type="checkbox" data-f="iuq" ${x.unique?'checked':''}>UNIQUE</label><label><input type="checkbox" data-f="innd" ${x.nullsNotDistinct?'checked':''}>NULLS NOT DISTINCT</label></div></div>`;
+}
+function trgHTML(t,g){
+  return `<div class="sub" data-k="trg" data-id="${g.id}"><div class="r"><input type="text" data-f="gname" value="${esc(g.name)}" placeholder="nome do trigger"><button class="sm danger" data-a="delG" title="Remover">✕</button></div>
+  <div class="r"><select data-f="gtiming">${optList(MADB.TRIGGER_TIMING,g.timing)}</select><select data-f="glevel">${optList(['ROW','STATEMENT'],g.level)}</select></div>
+  <div class="r">${MADB.TRIGGER_EVENTS.map(e=>`<label><input type="checkbox" data-f="gev" value="${e}" ${g.events.includes(e)?'checked':''}>${e}</label>`).join('')}</div>
+  <div class="r"><input type="text" list="fns" data-f="gfn" value="${esc(g.function)}" placeholder="schema.função"><input type="text" data-f="gwhen" value="${esc(g.when||'')}" placeholder="WHEN (opcional)"></div></div>`;
+}
+function partHTML(t){
+  const p=t.partition;
+  let h=`<div class="r"><select data-f="pby"><option value="">Sem partição</option>${optList(MADB.PARTITION_METHODS,p&&p.by)}</select>
+    ${p?`<input type="text" data-f="pcols" value="${esc(dv(t.id+':pcols',colNames(t,p.cols)))}" placeholder="coluna(s) de partição">`:''}</div>${drafts[t.id+':bad']?`<span class="bad">${esc(drafts[t.id+':bad'])}</span>`:''}`;
+  if(p){
+    h+=(t.partitions||[]).map(x=>`<div class="sub" data-k="par" data-id="${x.id}"><div class="r"><input type="text" data-f="xname" value="${esc(x.name)}" placeholder="nome da partição"><button class="sm danger" data-a="delP" title="Remover">✕</button></div>
+      <div class="r"><input type="text" data-f="xbound" value="${esc(x.bound)}" placeholder="FROM ('2026-01-01') TO ('2026-02-01')"></div></div>`).join('');
+    h+=`<button class="sm" data-a="addP">+ Partição filha</button>`;
+  }
+  return h;
+}
+function colHTML(t,c){
+  return `<div class="col" data-cid="${c.id}">
     <div class="l1"><input class="nm" type="text" data-f="name" value="${esc(c.name)}" placeholder="nome">
       <input class="ty" type="text" list="types" data-f="type" value="${esc(c.type)}" placeholder="tipo">
       <button class="sm danger" data-a="delC" title="Remover coluna">✕</button></div>
@@ -235,104 +342,270 @@ function renderEditor(){
       <input class="df" type="text" data-f="def" value="${esc(c.def)}" placeholder="DEFAULT">
     </div>
     <div class="l3"><select data-f="ref">${refOptions(t,c)}</select>
-      ${c.ref?`<select data-f="del" title="ON DELETE">${['NO ACTION','CASCADE','SET NULL','RESTRICT'].map(v=>`<option ${c.del===v?'selected':''}>${v}</option>`).join('')}</select>`:''}</div>
-  </div>`).join('')||'<div class="empty">Sem colunas.</div>'}`;
+      ${c.ref?`<select data-f="del" title="ON DELETE">${optList(DEL,c.del)}</select>`:''}</div>
+    <details class="more" ${(c.identity||c.generated||c.comment)?'open':''}><summary>identity · gerada · comentário</summary>
+      <div class="r"><select data-f="identity"><option value="">sem identity</option>${optList(['ALWAYS','BY DEFAULT'],c.identity)}</select>
+        <input type="text" data-f="generated" value="${esc(c.generated||'')}" placeholder="coluna gerada: expressão"></div>
+      <div class="r"><input type="text" data-f="comment" value="${esc(c.comment||'')}" placeholder="comentário da coluna"></div></details>
+  </div>`;
 }
-function clearRefsTo(tid,cid){
-  S.tables.forEach(t=>t.cols.forEach(c=>{if(c.ref&&c.ref.t===tid&&(!cid||c.ref.c===cid))c.ref=null}));
+function modelHTML(){
+  return `<div class="sec">Opções</div>
+  <div class="row"><label style="min-width:90px">Nomes de índice</label><select data-g="naming">${['idx','ix'].map(v=>`<option value="${v}" ${((S.options&&S.options.indexNaming)||'idx')===v?'selected':''}>${v==='idx'?'idx_tabela_coluna':'ix_tabela__coluna'}</option>`).join('')}</select></div>
+  <div class="sec" style="margin-top:14px">Schemas <span class="spacer"></span><button class="sm primary" data-a="addS">+ Schema</button></div>
+  ${(S.schemas||[]).map((s,i)=>`<div class="sub" data-k="sch" data-i="${i}"><div class="r"><input type="text" data-f="sname" value="${esc(s.name)}" placeholder="nome"><button class="sm danger" data-a="delS">✕</button></div>
+    <div class="r"><input type="text" data-f="scomment" value="${esc(s.comment||'')}" placeholder="comentário"></div></div>`).join('')||'<div class="empty" style="padding:4px">Schemas usados por tabelas já são criados sozinhos.</div>'}
+  <div class="sec" style="margin-top:14px">Enums <span class="spacer"></span><button class="sm primary" data-a="addE">+ Enum</button></div>
+  ${S.enums.map(e=>`<div class="sub" data-k="enum" data-id="${e.id}"><div class="r"><input type="text" data-f="schema" value="${esc(e.schema)}" placeholder="schema" style="max-width:90px"><input type="text" data-f="ename" value="${esc(e.name)}" placeholder="nome"><button class="sm danger" data-a="delE">✕</button></div>
+    <textarea data-f="evalues" placeholder="um valor por linha" spellcheck="false">${esc(e.values.join('\n'))}</textarea>
+    <div class="r"><input type="text" data-f="ecomment" value="${esc(e.comment||'')}" placeholder="comentário"></div></div>`).join('')||'<div class="empty" style="padding:4px">Nenhum enum.</div>'}
+  <div class="sec" style="margin-top:14px">Funções <span class="spacer"></span><button class="sm primary" data-a="addF">+ Função</button></div>
+  ${S.functions.map(f=>`<div class="sub" data-k="fn" data-id="${f.id}"><div class="r"><input type="text" data-f="schema" value="${esc(f.schema)}" placeholder="schema" style="max-width:90px"><input type="text" data-f="fname" value="${esc(f.name)}" placeholder="nome"><button class="sm danger" data-a="delF">✕</button></div>
+    <textarea data-f="fsql" placeholder="CREATE OR REPLACE FUNCTION ..." spellcheck="false" style="min-height:110px">${esc(f.sql)}</textarea>
+    <div class="r"><input type="text" data-f="fcomment" value="${esc(f.comment||'')}" placeholder="comentário"></div></div>`).join('')||'<div class="empty" style="padding:4px">Nenhuma função (usadas por triggers).</div>'}`;
 }
+function renderEditor(){
+  renderChips();updateDatalists();
+  const ed=$('#editor');
+  if(sel===MODEL){ed.innerHTML=modelHTML();return}
+  const t=tOf(sel);
+  if(!t){ed.innerHTML='<div class="empty">Crie ou selecione uma tabela para editar.</div>';return}
+  ed.innerHTML=`
+  <div class="sec">Tabela</div>
+  <div class="row"><label>Nome</label><input type="text" data-f="tname" value="${esc(t.name)}"></div>
+  <div class="row"><label>Schema</label><input type="text" data-f="tschema" value="${esc(t.schema)}">
+    <button class="sm danger" data-a="delT">Excluir tabela</button></div>
+  <div class="row"><label>Coment.</label><input type="text" data-f="tcomment" value="${esc(t.comment||'')}" placeholder="COMMENT ON TABLE"></div>
+  <div class="sec" style="margin-top:14px">Colunas <span class="spacer"></span><button class="sm primary" data-a="addC">+ Coluna</button></div>
+  ${t.cols.map(c=>colHTML(t,c)).join('')||'<div class="empty">Sem colunas.</div>'}
+  <div class="sec" style="margin-top:14px">Restrições (CHECK, UNIQUE e FK composta) <span class="spacer"></span><button class="sm primary" data-a="addK">+ Restrição</button></div>
+  ${(t.constraints||[]).map(k=>conHTML(t,k)).join('')||'<div class="empty" style="padding:4px">Nenhuma.</div>'}
+  <div class="sec" style="margin-top:14px">Índices <span class="spacer"></span><button class="sm primary" data-a="addI">+ Índice</button></div>
+  ${(t.indexes||[]).map(x=>idxHTML(t,x)).join('')||'<div class="empty" style="padding:4px">Nenhum índice explícito.</div>'}
+  <div class="sec" style="margin-top:14px">Triggers <span class="spacer"></span><button class="sm primary" data-a="addG">+ Trigger</button></div>
+  ${(t.triggers||[]).map(g=>trgHTML(t,g)).join('')||'<div class="empty" style="padding:4px">Nenhum.</div>'}
+  <div class="sec" style="margin-top:14px">Particionamento</div>
+  ${partHTML(t)}`;
+}
+function prune(){const l=MADB.prune(S);if(l.length)setNotice('Limpeza automática: '+l.join('; '))}
+function setNotice(msg){$('#warns').dataset.notice=msg}
+const emptyDel=(o,k)=>{if(o[k]&&!o[k].length)delete o[k]};
+
+/* edição por input (sem re-render, para não perder o foco) */
 $('#editor').addEventListener('input',e=>{
-  const f=e.target.dataset.f; if(!f)return;
-  const t=tOf(sel); if(!t)return;
-  if(f==='tname'){t.name=e.target.value;renderChips();renderOut();return}
-  if(f==='tschema'){t.schema=e.target.value.trim()||'public';renderOut();return}
-  const c=cOf(t,e.target.closest('.col').dataset.cid); if(!c)return;
-  if(f==='name'||f==='type'||f==='def'){c[f]=e.target.value;renderOut()}
+  const el=e.target,f=el.dataset.f,g=el.dataset.g;
+  if(g==='naming')return;
+  if(!f)return;
+  if(sel===MODEL)return modelInput(el,f);
+  const t=tOf(sel);if(!t)return;
+  const sub=el.closest('.sub'),col=el.closest('.col');
+  if(f==='tname'){t.name=el.value;renderChips();renderOut();return}
+  if(f==='tschema'){t.schema=el.value.trim()||'public';renderOut();return}
+  if(f==='tcomment'){if(el.value)t.comment=el.value;else delete t.comment;renderOut(true);return}
+  if(col){
+    const c=cOf(t,col.dataset.cid);if(!c)return;
+    if(['name','type','def'].includes(f)){c[f]=el.value;renderOut()}
+    else if(f==='generated'){if(el.value)c.generated=el.value;else delete c.generated;renderOut(true)}
+    else if(f==='comment'){if(el.value)c.comment=el.value;else delete c.comment;renderOut(true)}
+    return;
+  }
+  if(!sub)return;
+  const id=sub.dataset.id,k=sub.dataset.k;
+  if(k==='con'){const o=(t.constraints||[]).find(x=>x.id===id);if(!o)return;
+    if(f==='cname')o.name=el.value;else if(f==='cexpr')o.expr=el.value;
+    else if(f==='ccols'||f==='crefcols'){drafts[id+':'+f]=el.value;return}
+    renderOut(true)}
+  else if(k==='idx'){const o=(t.indexes||[]).find(x=>x.id===id);if(!o)return;
+    if(f==='iname')o.name=el.value;
+    else if(f==='iwhere'){if(el.value)o.where=el.value;else delete o.where}
+    else if(f==='imethod'){if(el.value)o.method=el.value;else delete o.method}
+    else if(f==='icols'){drafts[id+':icols']=el.value;return}
+    renderOut(true)}
+  else if(k==='trg'){const o=(t.triggers||[]).find(x=>x.id===id);if(!o)return;
+    if(f==='gname')o.name=el.value;else if(f==='gfn')o.function=el.value;
+    else if(f==='gwhen'){if(el.value)o.when=el.value;else delete o.when}
+    renderOut(true)}
+  else if(k==='par'){const o=(t.partitions||[]).find(x=>x.id===id);if(!o)return;
+    if(f==='xname')o.name=el.value;else if(f==='xbound')o.bound=el.value;
+    renderOut(true)}
+  if(f==='pcols'){drafts[t.id+':pcols']=el.value}
 });
+function modelInput(el,f){
+  const sub=el.closest('.sub');if(!sub)return;
+  const k=sub.dataset.k;
+  if(k==='sch'){const s=S.schemas[+sub.dataset.i];if(!s)return;
+    if(f==='sname')s.name=el.value;else if(f==='scomment'){if(el.value)s.comment=el.value;else delete s.comment}}
+  else if(k==='enum'){const o=S.enums.find(x=>x.id===sub.dataset.id);if(!o)return;
+    if(f==='schema')o.schema=el.value.trim()||'public';else if(f==='ename')o.name=el.value;
+    else if(f==='evalues')o.values=el.value.split('\n').map(x=>x.trim()).filter(Boolean);
+    else if(f==='ecomment'){if(el.value)o.comment=el.value;else delete o.comment}}
+  else if(k==='fn'){const o=S.functions.find(x=>x.id===sub.dataset.id);if(!o)return;
+    if(f==='schema')o.schema=el.value.trim()||'public';else if(f==='fname')o.name=el.value;
+    else if(f==='fsql')o.sql=el.value;else if(f==='fcomment'){if(el.value)o.comment=el.value;else delete o.comment}}
+  renderOut(true);
+}
+/* edição por change (pode re-renderizar) */
 $('#editor').addEventListener('change',e=>{
-  const f=e.target.dataset.f; if(!f)return;
-  const t=tOf(sel); if(!t)return;
-  if(f==='tname'||f==='tschema'||f==='name'){renderEditor();renderOut();return}
-  const col=e.target.closest('.col'); if(!col)return;
-  const c=cOf(t,col.dataset.cid); if(!c)return;
-  if(f==='pk'){c.pk=e.target.checked;if(c.pk)c.nn=true}
-  else if(f==='nn'||f==='uq'){c[f]=e.target.checked}
-  else if(f==='ref'){const v=e.target.value;if(!v)c.ref=null;else{const [a,b]=v.split('|');c.ref={t:a,c:b};
-      const rc=cOf(tOf(a),b); if(rc&&(!c.type||c.type==='text')) c.type=baseType(rc.type)}}
-  else if(f==='del'){c.del=e.target.value}
+  const el=e.target,f=el.dataset.f,g=el.dataset.g;
+  if(g==='naming'){S.options=Object.assign({},S.options,{indexNaming:el.value});syncNaming();renderOut(true);return}
+  if(!f)return;
+  if(sel===MODEL){renderEditor();return}
+  const t=tOf(sel);if(!t)return;
+  const sub=el.closest('.sub'),col=el.closest('.col');
+  if(['tname','tschema','name'].includes(f)){renderEditor();renderOut();return}
+  if(col){
+    const c=cOf(t,col.dataset.cid);if(!c)return;
+    if(f==='pk'){c.pk=el.checked;if(c.pk)c.nn=true}
+    else if(f==='nn'||f==='uq')c[f]=el.checked;
+    else if(f==='ref'){const v=el.value;if(!v)c.ref=null;else{const [a,b]=v.split('|');c.ref={t:a,c:b};
+        const rc=cOf(tOf(a),b);if(rc&&(!c.type||c.type==='text'))c.type=baseType(rc.type)}}
+    else if(f==='del')c.del=el.value;
+    else if(f==='identity'){if(el.value)c.identity=el.value;else delete c.identity}
+    renderAll();return;
+  }
+  if(f==='pby'){
+    if(!el.value){delete t.partition;delete t.partitions}
+    else if(!t.partition){const pk=t.cols.filter(c=>c.pk);t.partition={by:el.value,cols:(pk[pk.length-1]||t.cols[0]||{}).id?[(pk[pk.length-1]||t.cols[0]).id]:[]}}
+    else t.partition.by=el.value;
+    renderAll();return;
+  }
+  if(f==='pcols'){const r=parseColList(t,el.value);
+    if(r.bad.length)drafts[t.id+':bad']='Coluna(s) que não existem em "'+t.name+'": '+r.bad.join(', ');
+    else{t.partition.cols=r.ids;delete drafts[t.id+':bad'];delete drafts[t.id+':pcols']}
+    renderAll();return;}
+  if(!sub)return;
+  const id=sub.dataset.id,k=sub.dataset.k;
+  if(k==='con'){const o=(t.constraints||[]).find(x=>x.id===id);if(!o)return;
+    if(f==='ckind'){
+      delete o.expr;delete o.cols;delete o.ref;delete o.del;delete o.nullsNotDistinct;o.kind=el.value;
+      Object.keys(drafts).filter(x=>x.startsWith(id+':')).forEach(x=>delete drafts[x]);
+      if(o.kind==='check')o.expr='';
+      else{o.cols=[];if(o.kind==='fk'){const rt=S.tables.find(x=>x.id!==t.id)||t;o.ref={t:rt.id,cols:[]};o.del='NO ACTION'}}
+    }
+    else if(f==='cnnd'){if(el.checked)o.nullsNotDistinct=true;else delete o.nullsNotDistinct}
+    else if(f==='cdel')o.del=el.value;
+    else if(f==='creft'){o.ref={t:el.value,cols:[]};delete drafts[id+':crefcols'];delete drafts[id+':bad']}
+    else if(f==='ccols'||f==='crefcols'){
+      const target=f==='ccols'?t:tOf(o.ref.t),r=parseColList(target,el.value);
+      if(r.bad.length)drafts[id+':bad']='Coluna(s) que não existem em "'+target.name+'": '+r.bad.join(', ');
+      else{if(f==='ccols')o.cols=r.ids;else o.ref.cols=r.ids;delete drafts[id+':bad'];delete drafts[id+':'+f]}
+    }
+    renderAll();return}
+  if(k==='idx'){const o=(t.indexes||[]).find(x=>x.id===id);if(!o)return;
+    if(f==='iuq'){if(el.checked)o.unique=true;else delete o.unique}
+    else if(f==='innd'){if(el.checked)o.nullsNotDistinct=true;else delete o.nullsNotDistinct}
+    else if(f==='icols'){const r=parseIdxCols(t,el.value);
+      if(r.bad.length)drafts[id+':bad']='Não entendi: '+r.bad.join(' | ')+' (use nomes de colunas desta tabela ou (expressão))';
+      else{o.cols=r.cols;delete drafts[id+':bad'];delete drafts[id+':icols']}}
+    renderAll();return}
+  if(k==='trg'){const o=(t.triggers||[]).find(x=>x.id===id);if(!o)return;
+    if(f==='gtiming')o.timing=el.value;else if(f==='glevel')o.level=el.value;
+    else if(f==='gev'){o.events=MADB.TRIGGER_EVENTS.filter(ev=>sub.querySelector(`[data-f=gev][value="${ev}"]`).checked)}
+    renderAll();return}
   renderAll();
 });
 $('#editor').addEventListener('click',e=>{
-  const a=e.target.dataset.a; if(!a)return;
-  const t=tOf(sel); if(!t)return;
-  if(a==='addC'){t.cols.push(mkCol('coluna_'+(t.cols.length+1),'text'))}
-  if(a==='delC'){const id=e.target.closest('.col').dataset.cid;t.cols=t.cols.filter(c=>c.id!==id);clearRefsTo(t.id,id)}
-  if(a==='delT'){S.tables=S.tables.filter(x=>x.id!==t.id);clearRefsTo(t.id);sel=S.tables[0]?S.tables[0].id:null}
+  const btn=e.target.closest('[data-a]');if(!btn)return;const a=btn.dataset.a;
+  const sub=btn.closest('.sub');
+  if(sel===MODEL){
+    if(a==='addS')S.schemas.push({name:'novo_schema'});
+    else if(a==='delS')S.schemas.splice(+sub.dataset.i,1);
+    else if(a==='addE')S.enums.push({id:MADB.newId(S,'enum'),schema:'public',name:'novo_enum',values:['valor1','valor2']});
+    else if(a==='delE')S.enums=S.enums.filter(x=>x.id!==sub.dataset.id);
+    else if(a==='addF')S.functions.push({id:MADB.newId(S,'function'),schema:'public',name:'nova_funcao',sql:'CREATE OR REPLACE FUNCTION public.nova_funcao() RETURNS trigger\nLANGUAGE plpgsql AS $$\nBEGIN\n  RETURN NEW;\nEND;\n$$;'});
+    else if(a==='delF')S.functions=S.functions.filter(x=>x.id!==sub.dataset.id);
+    renderAll();return;
+  }
+  const t=tOf(sel);if(!t)return;
+  if(a==='addC')mkCol(t,'coluna_'+(t.cols.length+1),'text');
+  else if(a==='delC'){const id=btn.closest('.col').dataset.cid;t.cols=t.cols.filter(c=>c.id!==id);prune()}
+  else if(a==='delT'){S.tables=S.tables.filter(x=>x.id!==t.id);prune();sel=S.tables[0]?S.tables[0].id:null}
+  else if(a==='addK'){(t.constraints=t.constraints||[]).push({id:MADB.newId(S,'constraint',t),name:'',kind:'check',expr:''})}
+  else if(a==='delK'){t.constraints=t.constraints.filter(x=>x.id!==sub.dataset.id);emptyDel(t,'constraints')}
+  else if(a==='addI'){const pk=t.cols[0];(t.indexes=t.indexes||[]).push({id:MADB.newId(S,'index',t),name:`idx_${t.name}_${(pk&&pk.name)||'col'}`,cols:pk?[{c:pk.id}]:[]})}
+  else if(a==='delI'){t.indexes=t.indexes.filter(x=>x.id!==sub.dataset.id);emptyDel(t,'indexes')}
+  else if(a==='addG'){(t.triggers=t.triggers||[]).push({id:MADB.newId(S,'trigger',t),name:`tg_${t.name}`,timing:'BEFORE',events:['UPDATE'],level:'ROW',function:S.functions[0]?S.functions[0].schema+'.'+S.functions[0].name:''})}
+  else if(a==='delG'){t.triggers=t.triggers.filter(x=>x.id!==sub.dataset.id);emptyDel(t,'triggers')}
+  else if(a==='addP'){(t.partitions=t.partitions||[]).push({id:MADB.newId(S,'partition',t),name:`${t.name}_p${t.partitions.length+1}`,bound:t.partition&&t.partition.by==='HASH'?'WITH (MODULUS 4, REMAINDER 0)':t.partition&&t.partition.by==='LIST'?"IN ('A')":"FROM ('2026-01-01') TO ('2026-02-01')"})}
+  else if(a==='delP'){t.partitions=t.partitions.filter(x=>x.id!==sub.dataset.id);emptyDel(t,'partitions')}
   renderAll();
 });
 $('#chips').addEventListener('click',e=>{const id=e.target.dataset.id;if(id){sel=id;renderAll()}});
 $('#bAddT').onclick=()=>{
   const n=S.tables.length+1;
-  const t=mkTable('tabela_'+n,40+(n%4)*260,40+Math.floor(n/4)*220,[mkCol('id','bigserial',{pk:true})]);
-  S.tables.push(t);sel=t.id;renderAll();
+  const t=mkTable('tabela_'+n,40+(n%4)*260,40+Math.floor(n/4)*220);
+  mkCol(t,'id','bigint',{pk:true,nn:true,identity:'ALWAYS'});
+  sel=t.id;renderAll();
 };
-function baseType(ty){const l=String(ty).toLowerCase().trim();return l==='serial'?'integer':l==='bigserial'?'bigint':l==='smallserial'?'smallint':ty}
 
-/* ---------- diagram ---------- */
-function tH(t){return HH+t.cols.length*RH+6}
+/* ---------- diagrama ---------- */
+const tH=MADB.tableHeight;
 function rowY(t,c){return t.y+HH+t.cols.indexOf(c)*RH+RH/2}
+function edge(s,c,t,rc,many){
+  const y1=rowY(s,c),y2=rowY(t,rc);
+  const right=(s.x+W/2)<=(t.x+W/2);
+  let x1,x2,d1,d2;
+  if(s===t){x1=s.x+W;x2=s.x+W;d1=1;d2=1}
+  else if(right){x1=s.x+W;x2=t.x;d1=1;d2=-1}
+  else{x1=s.x;x2=t.x+W;d1=-1;d2=1}
+  const k=s===t?60:Math.max(40,Math.abs(x2-x1)/2);
+  return `<path class="edge" d="M${x1},${y1} C${x1+d1*k},${y1} ${x2+d2*k},${y2} ${x2},${y2}"/>
+  <text class="card" x="${x1+d1*12-(d1<0?4:0)}" y="${y1-5}" text-anchor="${d1>0?'start':'end'}">${many?'N':'1'}</text>
+  <text class="card" x="${x2+d2*12-(d2<0?4:0)}" y="${y2-5}" text-anchor="${d2>0?'start':'end'}">1</text>`;
+}
 function renderDiagram(){
+  MADB.autoLayout(S,false);
   let mx=0,my=0;
   S.tables.forEach(t=>{mx=Math.max(mx,t.x+W);my=Math.max(my,t.y+tH(t))});
   const w=Math.max(mx+80,600),h=Math.max(my+80,360);
   const svg=$('#svg');
   svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.setAttribute('width',w*zoom);svg.setAttribute('height',h*zoom);
   let o='';
-  S.tables.forEach(s=>s.cols.forEach(c=>{
-    if(!c.ref)return;
-    const t=tOf(c.ref.t),rc=cOf(t,c.ref.c); if(!t||!rc)return;
-    const y1=rowY(s,c),y2=rowY(t,rc);
-    const right=(s.x+W/2)<=(t.x+W/2);
-    let x1,x2,d1,d2;
-    if(s===t){x1=s.x+W;x2=s.x+W;d1=1;d2=1}
-    else if(right){x1=s.x+W;x2=t.x;d1=1;d2=-1}
-    else{x1=s.x;x2=t.x+W;d1=-1;d2=1}
-    const k=s===t?60:Math.max(40,Math.abs(x2-x1)/2);
-    o+=`<path class="edge" d="M${x1},${y1} C${x1+d1*k},${y1} ${x2+d2*k},${y2} ${x2},${y2}"/>`;
-    o+=`<text class="card" x="${x1+d1*12-(d1<0?4:0)}" y="${y1-5}" text-anchor="${d1>0?'start':'end'}">${(c.uq||c.pk&&s.cols.filter(z=>z.pk).length===1)?'1':'N'}</text>`;
-    o+=`<text class="card" x="${x2+d2*12-(d2<0?4:0)}" y="${y2-5}" text-anchor="${d2>0?'start':'end'}">1</text>`;
-  }));
+  S.tables.forEach(s=>{
+    s.cols.forEach(c=>{
+      if(!c.ref)return;
+      const t=tOf(c.ref.t),rc=cOf(t,c.ref.c);if(!t||!rc)return;
+      o+=edge(s,c,t,rc,!(c.uq||c.pk&&s.cols.filter(z=>z.pk).length===1));
+    });
+    (s.constraints||[]).forEach(k=>{
+      if(k.kind!=='fk')return;
+      const t=tOf(k.ref.t),c=cOf(s,k.cols[0]),rc=cOf(t,k.ref.cols[0]);if(!t||!c||!rc)return;
+      o+=edge(s,c,t,rc,true);
+    });
+  });
   S.tables.forEach(t=>{
-    const h=tH(t);
+    const h=tH(t),sub=[t.schema&&t.schema!=='public'?t.schema:'',t.partition?'particionada':''].filter(Boolean).join(' · ');
+    const compFk=new Set();(t.constraints||[]).forEach(k=>{if(k.kind==='fk')k.cols.forEach(i=>compFk.add(i))});
     o+=`<g class="tb ${t.id===sel?'sel':''}" data-id="${t.id}" transform="translate(${t.x},${t.y})">
       <rect class="body" width="${W}" height="${h}" rx="7"/>
       <path class="hd" d="M0,7 a7,7 0 0 1 7,-7 h${W-14} a7,7 0 0 1 7,7 v${HH-7} h-${W} z"/>
-      <text class="ht" x="12" y="${t.schema&&t.schema!=='public'?15:21}">${esc(t.name)}</text>
-      ${t.schema&&t.schema!=='public'?`<text class="hs" x="12" y="28">${esc(t.schema)}</text>`:''}`;
+      <text class="ht" x="12" y="${sub?15:21}">${esc(t.name)}</text>
+      ${sub?`<text class="hs" x="12" y="28">${esc(sub)}</text>`:''}`;
     t.cols.forEach((c,i)=>{
       const y=HH+i*RH;
       if(i)o+=`<line class="rl" x1="0" x2="${W}" y1="${y}" y2="${y}"/>`;
-      const tag=c.pk&&c.ref?'PK·FK':c.pk?'PK':c.ref?'FK':'';
+      const fk=c.ref||compFk.has(c.id);
+      const tag=c.pk&&fk?'PK·FK':c.pk?'PK':fk?'FK':'';
       o+=`<text class="${c.pk?'tag-pk':'tag-fk'}" x="10" y="${y+15}">${tag}</text>
       <text class="cn" x="${tag?(tag.length>2?44:28):12}" y="${y+15}" ${c.pk?'font-weight="600"':''}>${esc(c.name)}${(c.nn||c.pk)?'':'?'}</text>
       <text class="ct" x="${W-10}" y="${y+15}" text-anchor="end">${esc(c.type.length>16?c.type.slice(0,15)+'…':c.type)}</text>`;
     });
     o+='</g>';
   });
-  if(!S.tables.length)o='<text x="30" y="50" fill="currentColor" opacity=".5" font-size="14">Adicione uma tabela para começar o diagrama.</text>';
+  if(!S.tables.length)o='<text x="30" y="50" fill="currentColor" opacity=".5" font-size="14">Adicione uma tabela ou importe um JSON para começar o diagrama.</text>';
   svg.innerHTML=o;
   $('#zl').textContent=Math.round(zoom*100)+'%';
 }
 let drag=null;
 $('#svg').addEventListener('pointerdown',e=>{
-  const g=e.target.closest('.tb'); if(!g)return;
-  const t=tOf(g.dataset.id); if(!t)return;
+  const g=e.target.closest('.tb');if(!g)return;
+  const t=tOf(g.dataset.id);if(!t)return;
   drag={id:t.id,sx:e.clientX,sy:e.clientY,ox:t.x,oy:t.y,moved:false};
   e.preventDefault();
 });
 window.addEventListener('pointermove',e=>{
   if(!drag)return;
-  const t=tOf(drag.id); const dx=(e.clientX-drag.sx)/zoom,dy=(e.clientY-drag.sy)/zoom;
+  const t=tOf(drag.id);const dx=(e.clientX-drag.sx)/zoom,dy=(e.clientY-drag.sy)/zoom;
   if(Math.abs(dx)+Math.abs(dy)>3)drag.moved=true;
   if(!drag.moved)return;
   t.x=Math.max(0,Math.round(drag.ox+dx));t.y=Math.max(0,Math.round(drag.oy+dy));
@@ -344,147 +617,109 @@ window.addEventListener('pointerup',()=>{
   if(sel!==id){sel=id;renderEditor()}
   renderDiagram();if(moved)renderOut(true);
 });
-$('#bLayout').onclick=()=>{
-  const cols=3,gx=W+90;let y=40,i=0,rowMax=0;
-  S.tables.forEach(t=>{
-    const c=i%cols;t.x=40+c*gx;t.y=y;rowMax=Math.max(rowMax,tH(t));i++;
-    if(c===cols-1){y+=rowMax+50;rowMax=0}
-  });
-  renderAll();
-};
+$('#bLayout').onclick=()=>{MADB.autoLayout(S,true);renderAll()};
 $('#bZp').onclick=()=>{zoom=Math.min(2,+(zoom+.1).toFixed(1));renderDiagram()};
 $('#bZm').onclick=()=>{zoom=Math.max(.4,+(zoom-.1).toFixed(1));renderDiagram()};
 
-/* ---------- generators ---------- */
+/* ---------- geradores ---------- */
+const naming=()=>(S.options&&S.options.indexNaming)||'idx';
+function syncNaming(){$('#optNaming').value=naming()}
 function genSQL(){
-  const out=['-- Gerado por MADB'+(cur()?' · arquitetura: '+cur().name.replace(/[\r\n]+/g,' '):''),'-- PostgreSQL',''];
-  const schemas=[...new Set(S.tables.map(t=>t.schema).filter(s=>s&&s!=='public'))];
-  schemas.forEach(s=>out.push(`CREATE SCHEMA IF NOT EXISTS ${q(s)};`));
-  if(schemas.length)out.push('');
-  S.tables.forEach(t=>{
-    const pks=t.cols.filter(c=>c.pk);
-    const lines=t.cols.map(c=>{
-      let l=`  ${q(c.name)} ${c.type||'text'}`;
-      if(c.pk&&pks.length===1)l+=' PRIMARY KEY';
-      else if(c.nn||c.pk)l+=' NOT NULL';
-      if(c.uq&&!(c.pk&&pks.length===1))l+=' UNIQUE';
-      if(c.def!=='')l+=` DEFAULT ${c.def}`;
-      return l;
-    });
-    if(pks.length>1)lines.push(`  CONSTRAINT ${q(t.name+'_pkey')} PRIMARY KEY (${pks.map(c=>q(c.name)).join(', ')})`);
-    out.push(`CREATE TABLE ${qt(t)} (\n${lines.join(',\n')}\n);`,'');
-  });
-  const fks=[],idx=[];
-  S.tables.forEach(t=>t.cols.forEach(c=>{
-    if(!c.ref)return;
-    const rt=tOf(c.ref.t),rc=cOf(rt,c.ref.c); if(!rt||!rc)return;
-    fks.push(`ALTER TABLE ${qt(t)}\n  ADD CONSTRAINT ${q(`${t.name}_${c.name}_fkey`)} FOREIGN KEY (${q(c.name)})\n  REFERENCES ${qt(rt)} (${q(rc.name)})${c.del&&c.del!=='NO ACTION'?` ON DELETE ${c.del}`:''};`);
-    if($('#optIdx').checked)idx.push(`CREATE INDEX ${q(`idx_${t.name}_${c.name}`)} ON ${qt(t)} (${q(c.name)});`);
-  }));
-  if(fks.length)out.push('-- Chaves estrangeiras',...fks.flatMap(f=>[f,'']));
-  if(idx.length)out.push('-- Índices',...idx,'');
-  if(!S.tables.length)out.push('-- (nenhuma tabela definida)');
-  return out.join('\n').replace(/\n{3,}/g,'\n\n').trimEnd()+'\n';
+  return MADB.toSQL(S,{fkIndexes:$('#optIdx').checked,indexNaming:naming(),header:'Gerado por MADB'+(cur()?' · arquitetura: '+cur().name.replace(/[\r\n]+/g,' '):'')});
 }
-function genMMD(){
-  const nm=s=>String(s).replace(/[^A-Za-z0-9_]/g,'_')||'_';
-  const ty=s=>String(s).replace(/\(.*?\)/g,'').replace(/\[\]/g,'_arr').replace(/\s+/g,'_')||'text';
-  let o='erDiagram\n';
-  S.tables.forEach(t=>{
-    o+=`  ${nm(t.name)} {\n`;
-    t.cols.forEach(c=>{
-      const k=[c.pk&&'PK',c.ref&&'FK',(c.uq&&!c.pk)&&'UK'].filter(Boolean).join(',');
-      o+=`    ${ty(c.type)} ${nm(c.name)}${k?' '+k:''}\n`;
-    });
-    o+='  }\n';
-  });
-  S.tables.forEach(t=>t.cols.forEach(c=>{
-    if(!c.ref)return; const rt=tOf(c.ref.t); if(!rt)return;
-    const single=t.cols.filter(z=>z.pk).length===1&&c.pk;
-    const l=(c.nn||c.pk)?'||':'|o', r=(c.uq||single)?'o|':'o{';
-    o+=`  ${nm(rt.name)} ${l}--${r} ${nm(t.name)} : "${c.name}"\n`;
-  }));
-  return o;
-}
-function genJSON(){return JSON.stringify(S,null,2)}
-function normalize(raw){
-  if(!raw||!Array.isArray(raw.tables))throw new Error('JSON precisa ter a chave "tables" (lista).');
-  const tm={},cm={};
-  const tables=raw.tables.map((t,i)=>{
-    const nt={id:nid(),name:String(t.name||'tabela_'+(i+1)),schema:String(t.schema||'public'),x:+t.x||40+(i%3)*300,y:+t.y||40+Math.floor(i/3)*260,cols:[]};
-    tm[t.id]=nt.id;
-    nt.cols=(t.cols||[]).map(c=>{const nc=mkCol(String(c.name||'coluna'),String(c.type||'text'),{pk:!!c.pk,nn:!!c.nn||!!c.pk,uq:!!c.uq,def:c.def==null?'':String(c.def),del:c.del||'NO ACTION'});
-      cm[t.id+'|'+c.id]=nc.id;nc._r=c.ref;return nc});
-    return nt;
-  });
-  tables.forEach((t,i)=>t.cols.forEach(c=>{
-    const r=c._r;delete c._r;
-    if(r&&tm[r.t]&&cm[r.t+'|'+r.c])c.ref={t:tm[r.t],c:cm[r.t+'|'+r.c]};
-  }));
-  return {tables};
-}
+const genMMD=()=>MADB.toMermaid(S);
+const genJSON=()=>MADB.exportJSON(S);
+const gen=()=>tab==='sql'?genSQL():tab==='mmd'?genMMD():genJSON();
 
-function warnings(){
-  const w=[],names={};
-  S.tables.forEach(t=>{
-    const k=(t.schema+'.'+t.name).toLowerCase();
-    names[k]=(names[k]||0)+1;
-    if(!t.name.trim())w.push('Há tabela sem nome.');
-    if(!t.cols.some(c=>c.pk))w.push(`"${t.name}" não tem chave primária.`);
-    const cn={};t.cols.forEach(c=>{const n=c.name.toLowerCase();cn[n]=(cn[n]||0)+1;
-      if(!c.name.trim())w.push(`"${t.name}" tem coluna sem nome.`);
-      if(c.ref){const rc=cOf(tOf(c.ref.t),c.ref.c);
-        if(rc&&baseType(rc.type).toLowerCase()!==baseType(c.type).toLowerCase())w.push(`FK ${t.name}.${c.name} (${c.type}) difere do tipo de ${tOf(c.ref.t).name}.${rc.name} (${rc.type}).`);
-        if(rc&&!rc.pk&&!rc.uq)w.push(`FK ${t.name}.${c.name} aponta para coluna sem PK/UNIQUE (o PostgreSQL vai recusar).`)}});
-    Object.entries(cn).forEach(([n,v])=>{if(v>1)w.push(`"${t.name}" tem coluna duplicada: ${n}.`)});
-  });
-  Object.entries(names).forEach(([n,v])=>{if(v>1)w.push(`Tabela duplicada: ${n}.`)});
-  return [...new Set(w)];
-}
-
-/* ---------- output ---------- */
 function renderOut(skipDiagram){
   if(!skipDiagram)renderDiagram();
   const ta=$('#code');
-  if(document.activeElement!==ta||tab!=='json'){
-    ta.value=tab==='sql'?genSQL():tab==='mmd'?genMMD():genJSON();
-  }
-  const w=warnings();
-  $('#warns').innerHTML=w.map(x=>'⚠ '+esc(x)).join('<br>');
-  saveDB();renderWs();
+  if(document.activeElement!==ta||tab!=='json')ta.value=gen();
+  const v=MADB.validate(S);
+  const notice=$('#warns').dataset.notice;
+  $('#warns').innerHTML=(notice?'ℹ '+esc(notice)+'<br>':'')+v.errors.map(x=>'<span class="er">✖ '+esc(x.message)+'</span>').join('<br>')+(v.errors.length&&v.warnings.length?'<br>':'')+v.warnings.map(x=>'⚠ '+esc(x.message)).join('<br>');
+  saveDB();renderWs();renderStatus();
 }
 function renderAll(){renderEditor();renderOut()}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
   tab=b.dataset.t;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===b));
   $('#code').readOnly=tab!=='json';
   $('#bApply').style.display=tab==='json'?'':'none';
-  $('#optIdxW').style.display=tab==='sql'?'':'none';
-  $('#code').value=tab==='sql'?genSQL():tab==='mmd'?genMMD():genJSON();
+  $('#bDown').style.display=tab==='json'?'':'none';
+  $('#optIdxW').style.display=tab==='sql'?'flex':'none';
+  $('#code').value=gen();
 });
 $('#optIdx').onchange=()=>renderOut(true);
+$('#optNaming').onchange=e=>{S.options=Object.assign({},S.options,{indexNaming:e.target.value});if(sel===MODEL)renderEditor();renderOut(true)};
 $('#bCopy').onclick=async()=>{
   const ta=$('#code'),b=$('#bCopy');
   try{await navigator.clipboard.writeText(ta.value)}catch(e){ta.select();try{document.execCommand('copy')}catch(_){}}
   b.textContent='Copiado ✓';setTimeout(()=>b.textContent='Copiar',1400);
 };
-$('#bApply').onclick=()=>{
-  try{S=normalize(JSON.parse($('#code').value));sel=S.tables[0]?S.tables[0].id:null;renderAll();
-    $('#warns').textContent='';}
-  catch(e){$('#warns').innerHTML='⚠ JSON inválido: '+esc(e.message)}
-};
 $('#bClear').onclick=()=>{
   const b=$('#bClear'),L='Limpar esta arquitetura';
-  if(b.dataset.arm){S={tables:[]};sel=null;renderAll();renderWs();b.textContent=L;delete b.dataset.arm}
+  if(b.dataset.arm){S=MADB.emptyModel();sel=null;setOrigin('edição local');renderAll();b.textContent=L;delete b.dataset.arm}
   else{b.dataset.arm=1;b.textContent='Confirmar limpar?';setTimeout(()=>{b.textContent=L;delete b.dataset.arm},2500)}};
+
+/* ---------- importação de JSON (colar, arquivo, arrastar) ---------- */
+function showImport(r,origem){
+  const box=$('#imp');
+  const li=(cls,i)=>`<div class="${cls}">${cls==='er'?'✖':cls==='wr'?'⚠':'ℹ'} ${i.path&&i.path!=='(JSON)'?`<code>${esc(i.path)}</code> `:''}${esc(i.message)}</div>`;
+  let h=`<button class="sm ghost x" id="impX">fechar</button>`;
+  if(r.errors.length)h+=`<div class="er"><b>Não importei ${esc(origem)} — nada foi alterado.</b> ${r.errors.length} problema(s):</div>`+r.errors.slice(0,40).map(i=>li('er',i)).join('')+(r.errors.length>40?`<div class="er">… e mais ${r.errors.length-40}</div>`:'');
+  else h+=`<div class="ok"><b>Importado: ${esc(origem)}.</b> ${esc(JSON.stringify(MADB.summary(r.model)))}</div>`;
+  h+=(r.warnings||[]).slice(0,15).map(i=>li('wr',i)).join('')+(r.notes||[]).slice(0,10).map(i=>li('nt',i)).join('');
+  box.innerHTML=h;box.hidden=false;
+  $('#impX').onclick=()=>box.hidden=true;
+}
+function importText(text,origem,after){
+  const r=MADB.load(text);
+  showImport(r,origem);
+  if(r.errors.length||!r.model)return false;
+  const go=mode=>{ // 'novo' | 'substituir'
+    if(mode==='novo'){saveDB();const w=newWs(origem.replace(/\.json$/i,''),r.model);DB.active=w.id;S=w.model;loadLink();}
+    else{S=r.model;cur().model=S}
+    sel=S.tables[0]?S.tables[0].id:null;zoom=1;
+    markSynced(null,'importado de '+origem);
+    renderWs();renderAll();if(after)after(r);
+  };
+  if(!S.tables.length&&!S.enums.length&&!S.functions.length)go('substituir');
+  else openModal({title:'Importar na arquitetura atual?',input:false,ok:'Importar',
+    msg:`A arquitetura "${cur().name}" já tem ${S.tables.length} tabela(s). O que fazer com o conteúdo de ${origem}?`,
+    extra:`<label class="opt-r"><input type="radio" name="ini" value="novo" checked><span>Criar uma nova arquitetura<small>Mantém a atual como está (recomendado)</small></span></label>
+           <label class="opt-r"><input type="radio" name="ini" value="substituir"><span>Substituir a atual<small>As alterações feitas aqui serão perdidas</small></span></label>`,
+    onOk:(_,v)=>go(v||'novo')});
+  return true;
+}
+async function importFile(file){
+  if(!file)return;
+  if(file.size>8*1024*1024){showImport({errors:[{path:'(arquivo)',message:`Arquivo grande demais (${Math.round(file.size/1048576)} MB; máximo 8 MB).`}],warnings:[],notes:[]},file.name);return}
+  let text;try{text=await file.text()}catch(e){showImport({errors:[{path:'(arquivo)',message:'Não consegui ler o arquivo: '+e.message}],warnings:[],notes:[]},file.name);return}
+  setTab('json');importText(text,file.name);
+}
+function setTab(t){document.querySelector(`.tab[data-t="${t}"]`).click()}
+$('#bApply').onclick=()=>importText($('#code').value,'o JSON colado');
+$('#bDown').onclick=()=>{
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([genJSON()],{type:'application/json'}));
+  a.download=(cur().name.replace(/[^\w.-]+/g,'_')||'modelo')+'.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+};
+$('#bOpen').onclick=()=>$('#fileIn').click();
+$('#fileIn').onchange=e=>{const f=e.target.files[0];e.target.value='';importFile(f)};
+let dragN=0;
+const hasFiles=e=>e.dataTransfer&&Array.from(e.dataTransfer.types||[]).includes('Files');
+window.addEventListener('dragenter',e=>{if(!hasFiles(e))return;dragN++;$('#dropov').hidden=false});
+window.addEventListener('dragleave',e=>{if(!hasFiles(e))return;dragN=Math.max(0,dragN-1);if(!dragN)$('#dropov').hidden=true});
+window.addEventListener('dragover',e=>{if(hasFiles(e))e.preventDefault()});
+window.addEventListener('drop',e=>{if(!hasFiles(e))return;e.preventDefault();dragN=0;$('#dropov').hidden=true;importFile(e.dataTransfer.files[0])});
 
 /* ---------- áreas de trabalho (arquiteturas) ---------- */
 const KEY='madb_ws_v1';
 let DB={ws:[],active:null};
 function cur(){return DB.ws.find(w=>w.id===DB.active)}
 function saveDB(){
-  const w=cur(); if(!w)return;
+  const w=cur();if(!w)return;
   w.model=S;
-  try{localStorage.setItem(KEY,JSON.stringify(DB))}catch(e){}
+  try{localStorage.setItem(KEY,JSON.stringify(DB,(k,v)=>k==='handle'?undefined:v))}catch(e){}
 }
 function renderWs(){
   $('#wsSel').innerHTML=DB.ws.map(w=>`<option value="${w.id}" ${w.id===DB.active?'selected':''}>${esc(w.name)} (${w.model.tables.length} tab.)</option>`).join('');
@@ -493,10 +728,11 @@ function switchTo(id){
   saveDB();
   DB.active=id;S=cur().model;sel=S.tables[0]?S.tables[0].id:null;zoom=1;
   $('#canvas').scrollTo(0,0);
+  loadLink();
   renderWs();renderAll();
 }
 function newWs(name,model){
-  const w={id:nid(),name:name.trim()||'Nova arquitetura',model};
+  const w={id:nid(),name:name.trim()||'Nova arquitetura',model,origin:{text:'edição local',at:Date.now()}};
   DB.ws.push(w);return w;
 }
 /* modal simples (alert/prompt são bloqueados em páginas embutidas) */
@@ -508,9 +744,9 @@ function openModal(o){
   ok.textContent=o.ok||'OK';ok.className=o.danger?'danger':'primary';
   m.hidden=false;
   (o.input===false?ok:inp).focus();if(o.input!==false)inp.select();
-  const close=()=>{m.hidden=true;document.removeEventListener('keydown',key)};
-  const done=()=>{const v=inp.value;const ex=document.querySelector('#mExtra input:checked');close();o.onOk(v,ex?ex.value:null)};
-  const key=e=>{if(e.key==='Escape')close();else if(e.key==='Enter'&&document.activeElement.tagName!=='BUTTON')done()};
+  const close=()=>{m.hidden=true;document.removeEventListener('keydown',key);if(o.onCancel)o.onCancel()};
+  const done=()=>{const v=inp.value;const ex=document.querySelector('#mExtra input:checked');m.hidden=true;document.removeEventListener('keydown',key);o.onOk(v,ex?ex.value:null)};
+  const key=e=>{if(e.key==='Escape')close();else if(e.key==='Enter'&&document.activeElement.tagName!=='BUTTON'&&document.activeElement.tagName!=='INPUT')done();else if(e.key==='Enter'&&document.activeElement===inp&&o.input!==false)done()};
   document.addEventListener('keydown',key);
   ok.onclick=done;$('#mCancel').onclick=close;
   m.onclick=e=>{if(e.target===m)close()};
@@ -521,44 +757,149 @@ $('#bWsNew').onclick=()=>openModal({
   value:'Arquitetura '+(DB.ws.length+1),ok:'Criar',
   extra:`<label class="opt-r"><input type="radio" name="ini" value="vazia" checked><span>Começar do zero<small>Área de trabalho vazia</small></span></label>
          <label class="opt-r"><input type="radio" name="ini" value="exemplo"><span>Começar com o exemplo<small>Modelo de e-commerce para editar</small></span></label>`,
-  onOk:(name,ini)=>{saveDB();const w=newWs(name,ini==='exemplo'?sample():{tables:[]});switchTo(w.id)}
+  onOk:(name,ini)=>{saveDB();const w=newWs(name,ini==='exemplo'?sample():MADB.emptyModel());switchTo(w.id)}
 });
 $('#bWsRen').onclick=()=>openModal({title:'Renomear arquitetura',value:cur().name,ok:'Salvar',
   onOk:name=>{if(name.trim()){cur().name=name.trim();renderWs();renderOut(true)}}});
 $('#bWsDup').onclick=()=>{
   saveDB();
-  const w=newWs(cur().name+' (cópia)',normalize(JSON.parse(JSON.stringify(S))));
+  const w=newWs(cur().name+' (cópia)',MADB.normalize(MADB.clone(MADB.serialize(S))).model);
   switchTo(w.id);
 };
 $('#bWsDel').onclick=()=>openModal({
   title:'Excluir arquitetura',input:false,danger:true,ok:'Excluir',
-  msg:`Excluir "${cur().name}" com ${S.tables.length} tabela(s)? Isso não pode ser desfeito. Dica: copie o JSON antes, se quiser guardar.`,
+  msg:`Excluir "${cur().name}" com ${S.tables.length} tabela(s)? Isso não pode ser desfeito. Dica: use "Baixar .json" na aba JSON antes, se quiser guardar.`,
   onOk:()=>{
     const id=DB.active;
-    DB.ws=DB.ws.filter(w=>w.id!==id);
-    if(!DB.ws.length)newWs('Nova arquitetura',{tables:[]});
+    DB.ws=DB.ws.filter(w=>w.id!==id);idbDel(id);
+    if(!DB.ws.length)newWs('Nova arquitetura',MADB.emptyModel());
     DB.active=DB.ws[0].id;S=cur().model;sel=S.tables[0]?S.tables[0].id:null;zoom=1;
-    renderWs();renderAll();
+    loadLink();renderWs();renderAll();
   }
 });
 
-/* init */
+/* ---------- origem, arquivo vinculado e sincronização ---------- */
+const FSA=typeof window.showOpenFilePicker==='function';
+const hhmm=ts=>new Date(ts).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+function modelHash(){
+  const o=MADB.serialize(S);o.tables.forEach(t=>{delete t.x;delete t.y});
+  return MADB.stableStringify(o);
+}
+const isDirty=()=>{const w=cur();return !!w&&w.syncHash!=null&&w.syncHash!==modelHash()};
+function setOrigin(text){const w=cur();if(w){w.origin={text,at:Date.now()}}}
+function markSynced(stamp,text){const w=cur();if(!w)return;w.syncHash=modelHash();if(stamp!=null)w.fileStamp=stamp;if(text)setOrigin(text)}
+let link=null; // {handle,perm}
+function renderStatus(){
+  const w=cur();if(!w)return;
+  const o=w.origin||{text:'edição local',at:Date.now()};
+  const dirty=isDirty();
+  $('#origin').innerHTML=`Origem: <b>${esc(o.text)}</b> · ${hhmm(o.at)}`+(w.link?` · arquivo vinculado: <b>${esc(w.link.name)}</b>`:'')+(dirty?' · <span style="color:var(--warn)">alterações locais ainda não gravadas no arquivo</span>':'');
+  $('#bLink').hidden=!FSA||!!link;
+  $('#bReload').hidden=!link;
+  $('#bSave').hidden=!link;
+  $('#autoW').hidden=!link;
+  $('#optAuto').checked=!!w.auto;
+}
+/* IndexedDB guarda o "handle" do arquivo (localStorage não consegue) */
+function idb(){return new Promise((res,rej)=>{const r=indexedDB.open('madb',1);r.onupgradeneeded=()=>r.result.createObjectStore('h');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+const handles={};
+async function idbSet(k,v){handles[k]=v;try{const d=await idb();await new Promise((res,rej)=>{const t=d.transaction('h','readwrite');t.objectStore('h').put(v,k);t.oncomplete=res;t.onerror=()=>rej(t.error)})}catch(e){}}
+async function idbGet(k){try{const d=await idb();return await new Promise((res,rej)=>{const r=d.transaction('h').objectStore('h').get(k);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}catch(e){return null}}
+async function idbDel(k){delete handles[k];try{const d=await idb();d.transaction('h','readwrite').objectStore('h').delete(k)}catch(e){}}
+async function loadLink(){
+  link=null;const w=cur();
+  if(w&&w.link){const h=handles[w.id]||await idbGet(w.id);if(h&&cur()===w){handles[w.id]=h;link={handle:h}}}
+  renderStatus();
+}
+async function ensurePerm(mode){
+  if(!link)return false;
+  try{
+    const o={mode:mode||'read'};
+    if(await link.handle.queryPermission(o)==='granted')return true;
+    return (await link.handle.requestPermission(o))==='granted';
+  }catch(e){return false}
+}
+$('#bLink').onclick=async()=>{
+  try{
+    const [h]=await window.showOpenFilePicker({types:[{description:'Modelo MADB (JSON)',accept:{'application/json':['.json']}}]});
+    const w=cur();w.link={name:h.name};await idbSet(w.id,h);link={handle:h};
+    await pullFromFile(true);
+  }catch(e){if(e&&e.name!=='AbortError')showImport({errors:[{path:'(arquivo)',message:'Não consegui vincular o arquivo: '+e.message}],warnings:[],notes:[]},'arquivo')}
+};
+$('#bReload').onclick=()=>pullFromFile(true);
+$('#optAuto').onchange=e=>{cur().auto=e.target.checked;if(e.target.checked)pullFromFile(false)};
+function keepPositions(m){ // mantém onde o usuário colocou as tabelas
+  m.tables.forEach(t=>{const old=tOf(t.id);if(old&&old.x!=null){t.x=old.x;t.y=old.y}});return m;
+}
+async function pullFromFile(manual){
+  if(!link||pulling)return;pulling=true;
+  try{
+    if(!await ensurePerm('read')){if(manual)showImport({errors:[{path:'(arquivo)',message:'Sem permissão para ler o arquivo vinculado.'}],warnings:[],notes:[]},cur().link.name);return}
+    const file=await link.handle.getFile(),w=cur();
+    if(!manual&&file.lastModified===w.fileStamp)return;
+    const text=await file.text(),r=MADB.load(text);
+    if(r.errors.length||!r.model){showImport(r,file.name);w.fileStamp=file.lastModified;return}
+    const incoming=r.model,same=MADB.stableStringify(stripXY(MADB.serialize(incoming)))===modelHash();
+    if(same){markSynced(file.lastModified);renderStatus();if(manual)showImport(r,file.name+' (já estava igual)');return}
+    const apply=()=>{S=keepPositions(incoming);w.model=S;if(!S.tables.find(t=>t.id===sel)&&sel!==MODEL)sel=S.tables[0]?S.tables[0].id:null;
+      markSynced(file.lastModified,'recebido do arquivo '+file.name);showImport(r,file.name);renderAll()};
+    if(!isDirty()&&w.syncHash!=null||!S.tables.length&&!S.enums.length&&!S.functions.length)apply();
+    else openModal({title:'O arquivo mudou e você também alterou aqui',input:false,ok:'Continuar',
+      msg:`"${file.name}" tem uma versão diferente da que está nesta arquitetura. Nada será sobrescrito sem a sua escolha:`,
+      extra:`<label class="opt-r"><input type="radio" name="ini" value="novo" checked><span>Abrir a do arquivo como nova arquitetura<small>Guarda as duas versões para você comparar (recomendado)</small></span></label>
+             <label class="opt-r"><input type="radio" name="ini" value="arquivo"><span>Usar a do arquivo nesta arquitetura<small>As alterações feitas aqui serão perdidas</small></span></label>
+             <label class="opt-r"><input type="radio" name="ini" value="minha"><span>Manter a minha<small>Ignora esta versão do arquivo (não pergunto de novo até ele mudar outra vez)</small></span></label>`,
+      onOk:(_,v)=>{
+        if(v==='arquivo')apply();
+        else if(v==='minha'){w.fileStamp=file.lastModified;renderStatus()}
+        else{saveDB();const nw=newWs(w.name+' (do arquivo)',incoming);nw.link=w.link;idbSet(nw.id,link.handle);nw.fileStamp=file.lastModified;
+          DB.active=nw.id;S=nw.model;sel=S.tables[0]?S.tables[0].id:null;markSynced(file.lastModified,'recebido do arquivo '+file.name);loadLink();renderWs();renderAll();showImport(r,file.name)}
+      },
+      onCancel:()=>{}});
+  }catch(e){if(manual)showImport({errors:[{path:'(arquivo)',message:'Falha ao ler o arquivo vinculado: '+e.message}],warnings:[],notes:[]},'arquivo')}
+  finally{pulling=false}
+}
+let pulling=false;
+function stripXY(o){o.tables.forEach(t=>{delete t.x;delete t.y});return o}
+$('#bSave').onclick=async()=>{
+  if(!link)return;
+  try{
+    if(!await ensurePerm('readwrite'))return;
+    const w=cur(),file=await link.handle.getFile();
+    const write=async()=>{
+      const ws=await link.handle.createWritable();await ws.write(genJSON());await ws.close();
+      const f2=await link.handle.getFile();markSynced(f2.lastModified,'gravado em '+f2.name);renderStatus();
+    };
+    if(w.fileStamp!=null&&file.lastModified!==w.fileStamp)
+      openModal({title:'Sobrescrever o arquivo?',input:false,ok:'Sobrescrever',danger:true,
+        msg:`"${file.name}" foi alterado por outro programa (talvez o agente) depois da última sincronização. Gravar agora substitui essa versão pela desta tela. Use "Recarregar do arquivo" se quiser ver a dele primeiro.`,onOk:write});
+    else await write();
+  }catch(e){showImport({errors:[{path:'(arquivo)',message:'Falha ao gravar: '+e.message}],warnings:[],notes:[]},'arquivo')}
+};
+setInterval(()=>{const w=cur();if(w&&w.auto&&link&&!document.hidden&&$('#modal').hidden)pullFromFile(false)},2000);
+
+/* ---------- inicialização ---------- */
 (function(){
   try{
     const raw=localStorage.getItem(KEY);
     if(raw){
       const p=JSON.parse(raw);
-      DB.ws=(p.ws||[]).map(w=>({id:w.id||nid(),name:String(w.name||'Arquitetura'),model:normalize(w.model||{tables:[]})}));
+      DB.ws=(p.ws||[]).map(w=>{
+        const n=MADB.normalize(w.model||{tables:[]});
+        if(!n.model){try{localStorage.setItem('madb_backup_'+(w.id||nid()),JSON.stringify(w.model))}catch(e){}}
+        return {id:w.id||nid(),name:String(w.name||'Arquitetura'),model:n.model||MADB.emptyModel(),origin:w.origin,link:w.link,auto:!!w.auto,syncHash:w.syncHash,fileStamp:w.fileStamp};
+      });
       DB.active=p.active;
     }else{
       const old=localStorage.getItem('pgarch'); // versão anterior (uma única arquitetura)
-      if(old){const m=normalize(JSON.parse(old));if(m.tables.length)DB.ws=[{id:nid(),name:'Minha arquitetura',model:m}]}
+      if(old){const n=MADB.normalize(JSON.parse(old));if(n.model&&n.model.tables.length)DB.ws=[{id:nid(),name:'Minha arquitetura',model:n.model}]}
     }
   }catch(e){}
-  if(!DB.ws.length)DB.ws=[{id:nid(),name:'Exemplo e-commerce',model:sample()}];
+  if(!DB.ws.length){DB.ws=[{id:nid(),name:'Exemplo e-commerce',model:sample(),origin:{text:'exemplo do MADB',at:Date.now()}}]}
   if(!DB.ws.some(w=>w.id===DB.active))DB.active=DB.ws[0].id;
   S=cur().model;sel=S.tables[0]?S.tables[0].id:null;
-  renderWs();renderAll();
+  syncNaming();
+  loadLink();renderWs();renderAll();
 })();
 </script>
 </body>

@@ -1,0 +1,165 @@
+{
+  "tables": [
+    {
+      "id": "t1",
+      "name": "clientes",
+      "schema": "vendas",
+      "x": 40,
+      "y": 40,
+      "comment": "Clientes da loja",
+      "cols": [
+        {
+          "id": "t1c1",
+          "name": "id",
+          "type": "uuid",
+          "pk": true,
+          "nn": true,
+          "uq": false,
+          "def": "gen_random_uuid()",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t1c2",
+          "name": "documento",
+          "type": "varchar(14)",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION",
+          "comment": "CPF (11) ou CNPJ (14), só dígitos"
+        },
+        {
+          "id": "t1c3",
+          "name": "nome",
+          "type": "varchar(150)",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "t1k1",
+          "name": "ck_clientes__documento",
+          "kind": "check",
+          "expr": "documento ~ '^[0-9]{11}([0-9]{3})?$'"
+        }
+      ]
+    },
+    {
+      "id": "t2",
+      "name": "pedidos",
+      "schema": "vendas",
+      "x": 360,
+      "y": 40,
+      "cols": [
+        {
+          "id": "t2c1",
+          "name": "id",
+          "type": "uuid",
+          "pk": true,
+          "nn": true,
+          "uq": false,
+          "def": "gen_random_uuid()",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t2c2",
+          "name": "cliente_id",
+          "type": "uuid",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": {
+            "t": "t9",
+            "c": "t9c1"
+          },
+          "del": "RESTRICT"
+        },
+        {
+          "id": "t2c3",
+          "name": "status",
+          "type": "vendas.pedido_status",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "'rascunho'",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t2c4",
+          "name": "total",
+          "type": "numeric(14,2)",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "0",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "id": "t2c5",
+          "name": "atualizado_em",
+          "type": "timestamptz",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "now()",
+          "ref": null,
+          "del": "NO ACTION"
+        }
+      ],
+      "constraints": [
+        {
+          "id": "t2k1",
+          "name": "uq_pedidos__id_cliente",
+          "kind": "unique",
+          "cols": [
+            "t2c1",
+            "t2c2"
+          ]
+        },
+        {
+          "id": "t2k2",
+          "name": "ck_pedidos__total",
+          "kind": "check",
+          "expr": "total >= 0"
+        }
+      ],
+      "indexes": [
+        {
+          "id": "t2i1",
+          "name": "ix_pedidos__abertos",
+          "cols": [
+            {
+              "c": "t2c5",
+              "order": "DESC"
+            }
+          ],
+          "where": "status = 'aberto'"
+        }
+      ],
+      "triggers": [
+        {
+          "id": "t2g1",
+          "name": "tg_pedidos__atualizado_em",
+          "timing": "BEFORE",
+          "events": [
+            "UPDATE"
+          ],
+          "level": "ROW",
+          "function": "vendas.atualizar_atualizado_em"
+        }
+      ]
+    }
+  ]
+}

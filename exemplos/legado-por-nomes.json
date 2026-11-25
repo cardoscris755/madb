@@ -1,0 +1,50 @@
+{
+  "tables": [
+    {
+      "name": "clientes",
+      "schema": "public",
+      "cols": [
+        {
+          "name": "id",
+          "type": "bigserial",
+          "pk": true,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION"
+        }
+      ]
+    },
+    {
+      "name": "pedidos",
+      "schema": "public",
+      "cols": [
+        {
+          "name": "id",
+          "type": "bigserial",
+          "pk": true,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": null,
+          "del": "NO ACTION"
+        },
+        {
+          "name": "cliente_id",
+          "type": "bigint",
+          "pk": false,
+          "nn": true,
+          "uq": false,
+          "def": "",
+          "ref": {
+            "table": "clientes",
+            "schema": "public",
+            "col": "id"
+          },
+          "del": "RESTRICT"
+        }
+      ]
+    }
+  ]
+}
