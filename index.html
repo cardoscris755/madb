@@ -84,7 +84,21 @@ textarea.code{flex:1;width:100%;border:none;border-radius:0;background:var(--cod
 .tb .rl{stroke:var(--line);stroke-width:.6}
 .edge{fill:none;stroke:var(--fk);stroke-width:1.6;opacity:.85}
 .card{fill:var(--fk);font:700 11px system-ui,sans-serif}
+.ws{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-left:8px;padding-left:14px;border-left:1px solid var(--line)}
+.ws label{font-size:12px;color:var(--muted)}
+.ws select{max-width:240px;font-weight:600}
+.modal-bg{position:fixed;inset:0;background:rgba(10,14,20,.55);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.modal-bg[hidden]{display:none}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;width:min(420px,100%);box-shadow:0 12px 40px rgba(0,0,0,.35)}
+.modal h2{margin:0 0 10px;font-size:16px}
+.modal input[type=text]{width:100%;margin-bottom:10px}
+.modal .mmsg{margin:0 0 12px;color:var(--muted)}
+.modal .mmsg:empty{display:none}
+.modal .opt-r{display:flex;gap:8px;align-items:flex-start;margin-bottom:8px;cursor:pointer}
+.modal .opt-r small{display:block;color:var(--muted)}
+.mact{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 @media (max-width:900px){
+  .ws{border-left:none;padding-left:0;margin-left:0}
   main{grid-template-columns:1fr;grid-template-rows:auto 1fr;overflow:auto}
   aside{border-right:none;border-bottom:1px solid var(--line);max-height:46vh}
   .out{height:260px}
@@ -94,10 +108,26 @@ textarea.code{flex:1;width:100%;border:none;border-radius:0;background:var(--cod
 <body>
 <header>
   <h1>MADB<span>modelagem PostgreSQL · diagrama ER · DDL</span></h1>
+  <div class="ws">
+    <label for="wsSel">Arquitetura</label>
+    <select id="wsSel" aria-label="Arquitetura ativa"></select>
+    <button id="bWsNew" class="primary">+ Nova arquitetura</button>
+    <button id="bWsRen">Renomear</button>
+    <button id="bWsDup">Duplicar</button>
+    <button id="bWsDel" class="ghost danger">Excluir</button>
+  </div>
   <div class="spacer"></div>
-  <button id="bSample">Carregar exemplo</button>
-  <button id="bClear" class="ghost danger">Limpar tudo</button>
+  <button id="bClear" class="ghost danger">Limpar esta arquitetura</button>
 </header>
+<div class="modal-bg" id="modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+    <h2 id="mTitle"></h2>
+    <p id="mMsg" class="mmsg"></p>
+    <input type="text" id="mInput">
+    <div id="mExtra"></div>
+    <div class="mact"><button id="mCancel">Cancelar</button><button id="mOk" class="primary">OK</button></div>
+  </div>
+</div>
 <main>
   <aside>
     <div class="sec">Tabelas <span class="spacer"></span><button class="sm primary" id="bAddT">+ Nova tabela</button></div>
@@ -327,7 +357,7 @@ $('#bZm').onclick=()=>{zoom=Math.max(.4,+(zoom-.1).toFixed(1));renderDiagram()};
 
 /* ---------- generators ---------- */
 function genSQL(){
-  const out=['-- Gerado por MADB','-- PostgreSQL',''];
+  const out=['-- Gerado por MADB'+(cur()?' · arquitetura: '+cur().name.replace(/[\r\n]+/g,' '):''),'-- PostgreSQL',''];
   const schemas=[...new Set(S.tables.map(t=>t.schema).filter(s=>s&&s!=='public'))];
   schemas.forEach(s=>out.push(`CREATE SCHEMA IF NOT EXISTS ${q(s)};`));
   if(schemas.length)out.push('');
@@ -421,7 +451,7 @@ function renderOut(skipDiagram){
   }
   const w=warnings();
   $('#warns').innerHTML=w.map(x=>'⚠ '+esc(x)).join('<br>');
-  try{localStorage.setItem('pgarch',JSON.stringify(S))}catch(e){}
+  saveDB();renderWs();
 }
 function renderAll(){renderEditor();renderOut()}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
@@ -442,15 +472,93 @@ $('#bApply').onclick=()=>{
     $('#warns').textContent='';}
   catch(e){$('#warns').innerHTML='⚠ JSON inválido: '+esc(e.message)}
 };
-$('#bSample').onclick=()=>{S=sample();sel=S.tables[0].id;renderAll()};
-$('#bClear').onclick=()=>{if($('#bClear').dataset.arm){S={tables:[]};sel=null;renderAll();$('#bClear').textContent='Limpar tudo';delete $('#bClear').dataset.arm}
-  else{$('#bClear').dataset.arm=1;$('#bClear').textContent='Confirmar limpar?';setTimeout(()=>{$('#bClear').textContent='Limpar tudo';delete $('#bClear').dataset.arm},2500)}};
+$('#bClear').onclick=()=>{
+  const b=$('#bClear'),L='Limpar esta arquitetura';
+  if(b.dataset.arm){S={tables:[]};sel=null;renderAll();renderWs();b.textContent=L;delete b.dataset.arm}
+  else{b.dataset.arm=1;b.textContent='Confirmar limpar?';setTimeout(()=>{b.textContent=L;delete b.dataset.arm},2500)}};
+
+/* ---------- áreas de trabalho (arquiteturas) ---------- */
+const KEY='madb_ws_v1';
+let DB={ws:[],active:null};
+function cur(){return DB.ws.find(w=>w.id===DB.active)}
+function saveDB(){
+  const w=cur(); if(!w)return;
+  w.model=S;
+  try{localStorage.setItem(KEY,JSON.stringify(DB))}catch(e){}
+}
+function renderWs(){
+  $('#wsSel').innerHTML=DB.ws.map(w=>`<option value="${w.id}" ${w.id===DB.active?'selected':''}>${esc(w.name)} (${w.model.tables.length} tab.)</option>`).join('');
+}
+function switchTo(id){
+  saveDB();
+  DB.active=id;S=cur().model;sel=S.tables[0]?S.tables[0].id:null;zoom=1;
+  $('#canvas').scrollTo(0,0);
+  renderWs();renderAll();
+}
+function newWs(name,model){
+  const w={id:nid(),name:name.trim()||'Nova arquitetura',model};
+  DB.ws.push(w);return w;
+}
+/* modal simples (alert/prompt são bloqueados em páginas embutidas) */
+function openModal(o){
+  const m=$('#modal'),inp=$('#mInput'),ok=$('#mOk');
+  $('#mTitle').textContent=o.title;$('#mMsg').textContent=o.msg||'';
+  inp.style.display=o.input===false?'none':'';inp.value=o.value||'';
+  $('#mExtra').innerHTML=o.extra||'';
+  ok.textContent=o.ok||'OK';ok.className=o.danger?'danger':'primary';
+  m.hidden=false;
+  (o.input===false?ok:inp).focus();if(o.input!==false)inp.select();
+  const close=()=>{m.hidden=true;document.removeEventListener('keydown',key)};
+  const done=()=>{const v=inp.value;const ex=document.querySelector('#mExtra input:checked');close();o.onOk(v,ex?ex.value:null)};
+  const key=e=>{if(e.key==='Escape')close();else if(e.key==='Enter'&&document.activeElement.tagName!=='BUTTON')done()};
+  document.addEventListener('keydown',key);
+  ok.onclick=done;$('#mCancel').onclick=close;
+  m.onclick=e=>{if(e.target===m)close()};
+}
+$('#wsSel').onchange=e=>switchTo(e.target.value);
+$('#bWsNew').onclick=()=>openModal({
+  title:'Nova arquitetura',msg:'Cada arquitetura é uma área de trabalho separada, com suas próprias tabelas e diagrama.',
+  value:'Arquitetura '+(DB.ws.length+1),ok:'Criar',
+  extra:`<label class="opt-r"><input type="radio" name="ini" value="vazia" checked><span>Começar do zero<small>Área de trabalho vazia</small></span></label>
+         <label class="opt-r"><input type="radio" name="ini" value="exemplo"><span>Começar com o exemplo<small>Modelo de e-commerce para editar</small></span></label>`,
+  onOk:(name,ini)=>{saveDB();const w=newWs(name,ini==='exemplo'?sample():{tables:[]});switchTo(w.id)}
+});
+$('#bWsRen').onclick=()=>openModal({title:'Renomear arquitetura',value:cur().name,ok:'Salvar',
+  onOk:name=>{if(name.trim()){cur().name=name.trim();renderWs();renderOut(true)}}});
+$('#bWsDup').onclick=()=>{
+  saveDB();
+  const w=newWs(cur().name+' (cópia)',normalize(JSON.parse(JSON.stringify(S))));
+  switchTo(w.id);
+};
+$('#bWsDel').onclick=()=>openModal({
+  title:'Excluir arquitetura',input:false,danger:true,ok:'Excluir',
+  msg:`Excluir "${cur().name}" com ${S.tables.length} tabela(s)? Isso não pode ser desfeito. Dica: copie o JSON antes, se quiser guardar.`,
+  onOk:()=>{
+    const id=DB.active;
+    DB.ws=DB.ws.filter(w=>w.id!==id);
+    if(!DB.ws.length)newWs('Nova arquitetura',{tables:[]});
+    DB.active=DB.ws[0].id;S=cur().model;sel=S.tables[0]?S.tables[0].id:null;zoom=1;
+    renderWs();renderAll();
+  }
+});
 
 /* init */
 (function(){
-  try{const raw=localStorage.getItem('pgarch');if(raw){const p=normalize(JSON.parse(raw));if(p.tables.length)S=p}}catch(e){}
-  if(!S.tables.length)S=sample();
-  sel=S.tables[0].id;renderAll();
+  try{
+    const raw=localStorage.getItem(KEY);
+    if(raw){
+      const p=JSON.parse(raw);
+      DB.ws=(p.ws||[]).map(w=>({id:w.id||nid(),name:String(w.name||'Arquitetura'),model:normalize(w.model||{tables:[]})}));
+      DB.active=p.active;
+    }else{
+      const old=localStorage.getItem('pgarch'); // versão anterior (uma única arquitetura)
+      if(old){const m=normalize(JSON.parse(old));if(m.tables.length)DB.ws=[{id:nid(),name:'Minha arquitetura',model:m}]}
+    }
+  }catch(e){}
+  if(!DB.ws.length)DB.ws=[{id:nid(),name:'Exemplo e-commerce',model:sample()}];
+  if(!DB.ws.some(w=>w.id===DB.active))DB.active=DB.ws[0].id;
+  S=cur().model;sel=S.tables[0]?S.tables[0].id:null;
+  renderWs();renderAll();
 })();
 </script>
 </body>
