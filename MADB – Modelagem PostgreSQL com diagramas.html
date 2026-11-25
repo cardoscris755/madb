@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MADB – Modelagem PostgreSQL com diagramas</title>
+<style>
+:root{
+  --bg:#f6f7f9;--panel:#fff;--panel2:#f0f2f5;--line:#d9dde3;--text:#1c2330;--muted:#667085;
+  --accent:#2f5d9e;--accent-ink:#fff;--accent-soft:#e6eefb;--warn:#a15c00;--warn-bg:#fff4e0;--danger:#b42318;
+  --pk:#b7791f;--fk:#2f7d5b;--code-bg:#0f1722;--code-ink:#d6e2f0;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#10151c;--panel:#18202b;--panel2:#1f2936;--line:#2c394a;--text:#e6ebf2;--muted:#93a1b5;
+  --accent:#6ea0ec;--accent-ink:#0c1522;--accent-soft:#1d2d47;--warn:#f0b35a;--warn-bg:#33270f;--danger:#f97066;
+  --pk:#e3b04b;--fk:#5fc79a;--code-bg:#0b1119;--code-ink:#d6e2f0}
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px}
+header h1 span{color:var(--muted);font-weight:400;font-size:13px;margin-left:8px}
+.spacer{flex:1}
+button,select,input,textarea{font:inherit;color:inherit}
+button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 11px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.ghost{background:transparent}
+button.danger{color:var(--danger)}
+button.sm{padding:2px 8px;font-size:12px}
+input[type=text],select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:4px 7px;min-width:0}
+input[type=text]:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
+main{flex:1;min-height:0;display:grid;grid-template-columns:370px 1fr}
+aside{background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:12px;min-height:0}
+.right{display:flex;flex-direction:column;min-width:0;min-height:0}
+.canvas-wrap{flex:1;min-height:200px;display:flex;flex-direction:column;min-height:0}
+.toolbar{display:flex;gap:6px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);background:var(--panel)}
+.toolbar .hint{color:var(--muted);font-size:12px}
+.canvas{flex:1;overflow:auto;background:
+  radial-gradient(var(--line) 1px,transparent 1px) 0 0/20px 20px,var(--bg)}
+svg{display:block}
+.out{height:300px;border-top:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
+.tabs{display:flex;gap:2px;padding:6px 10px 0;border-bottom:1px solid var(--line);align-items:flex-end}
+.tab{padding:5px 12px;border:1px solid transparent;border-bottom:none;border-radius:6px 6px 0 0;cursor:pointer;color:var(--muted);background:none}
+.tab.on{background:var(--code-bg);color:var(--code-ink);border-color:var(--line)}
+.tabs .spacer{flex:1}
+.tabs .acts{display:flex;gap:6px;padding-bottom:5px;align-items:center}
+.opt{font-size:12px;color:var(--muted);display:flex;gap:4px;align-items:center}
+textarea.code{flex:1;width:100%;border:none;border-radius:0;background:var(--code-bg);color:var(--code-ink);font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:10px 14px;resize:none;tab-size:2;white-space:pre}
+.warns{background:var(--warn-bg);color:var(--warn);font-size:12px;padding:5px 12px;border-top:1px solid var(--line);max-height:70px;overflow:auto}
+.warns:empty{display:none}
+/* editor */
+.sec{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin:2px 0 6px;display:flex;align-items:center}
+.sec .spacer{flex:1}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px}
+.chip{padding:3px 10px;border-radius:99px;border:1px solid var(--line);background:var(--panel2);cursor:pointer;font-size:13px}
+.chip.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.row{display:flex;gap:6px;margin-bottom:8px;align-items:center}
+.row label{font-size:12px;color:var(--muted);min-width:46px}
+.row input[type=text]{flex:1}
+.col{border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px;background:var(--panel2)}
+.col .l1{display:flex;gap:5px;margin-bottom:6px}
+.col .l1 .nm{flex:1.2}
+.col .l1 .ty{flex:1}
+.col .l2{display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
+.col .l2 label{display:flex;gap:3px;align-items:center;font-size:12px;cursor:pointer}
+.col .l2 .df{flex:1;min-width:90px}
+.col .l3{display:flex;gap:5px}
+.col .l3 select{flex:1}
+.empty{color:var(--muted);padding:20px 4px}
+/* svg */
+.tb{cursor:grab}
+.tb:active{cursor:grabbing}
+.tb .body{fill:var(--panel);stroke:var(--line);stroke-width:1.2}
+.tb.sel .body{stroke:var(--accent);stroke-width:2}
+.tb .hd{fill:var(--accent)}
+.tb .ht{fill:var(--accent-ink);font:600 13px system-ui,sans-serif}
+.tb .hs{fill:var(--accent-ink);opacity:.7;font:10px system-ui,sans-serif}
+.tb .cn{fill:var(--text);font:12.5px system-ui,sans-serif}
+.tb .ct{fill:var(--muted);font:11px ui-monospace,Menlo,Consolas,monospace}
+.tb .tag-pk{fill:var(--pk);font:700 9.5px system-ui,sans-serif}
+.tb .tag-fk{fill:var(--fk);font:700 9.5px system-ui,sans-serif}
+.tb .rl{stroke:var(--line);stroke-width:.6}
+.edge{fill:none;stroke:var(--fk);stroke-width:1.6;opacity:.85}
+.card{fill:var(--fk);font:700 11px system-ui,sans-serif}
+@media (max-width:900px){
+  main{grid-template-columns:1fr;grid-template-rows:auto 1fr;overflow:auto}
+  aside{border-right:none;border-bottom:1px solid var(--line);max-height:46vh}
+  .out{height:260px}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>MADB<span>modelagem PostgreSQL · diagrama ER · DDL</span></h1>
+  <div class="spacer"></div>
+  <button id="bSample">Carregar exemplo</button>
+  <button id="bClear" class="ghost danger">Limpar tudo</button>
+</header>
+<main>
+  <aside>
+    <div class="sec">Tabelas <span class="spacer"></span><button class="sm primary" id="bAddT">+ Nova tabela</button></div>
+    <div class="chips" id="chips"></div>
+    <div id="editor"></div>
+  </aside>
+  <div class="right">
+    <div class="canvas-wrap">
+      <div class="toolbar">
+        <button class="sm" id="bLayout">Auto-organizar</button>
+        <button class="sm" id="bZm">−</button>
+        <span id="zl" style="min-width:42px;text-align:center;font-size:12px">100%</span>
+        <button class="sm" id="bZp">+</button>
+        <span class="hint">Arraste as tabelas · clique para editar</span>
+      </div>
+      <div class="canvas" id="canvas"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+    </div>
+    <div class="warns" id="warns"></div>
+    <div class="out">
+      <div class="tabs">
+        <button class="tab on" data-t="sql">SQL (DDL)</button>
+        <button class="tab" data-t="mmd">Mermaid</button>
+        <button class="tab" data-t="json">JSON</button>
+        <div class="spacer"></div>
+        <div class="acts">
+          <label class="opt" id="optIdxW"><input type="checkbox" id="optIdx"> índices nas FKs</label>
+          <button class="sm" id="bApply" style="display:none">Aplicar JSON</button>
+          <button class="sm primary" id="bCopy">Copiar</button>
+        </div>
+      </div>
+      <textarea class="code" id="code" spellcheck="false" readonly></textarea>
+    </div>
+  </div>
+</main>
+<datalist id="types">
+  <option>serial</option><option>bigserial</option><option>smallint</option><option>integer</option><option>bigint</option>
+  <option>numeric(12,2)</option><option>real</option><option>double precision</option><option>boolean</option>
+  <option>text</option><option>varchar(255)</option><option>char(1)</option><option>date</option><option>time</option>
+  <option>timestamp</option><option>timestamptz</option><option>uuid</option><option>jsonb</option><option>json</option>
+  <option>bytea</option><option>inet</option><option>integer[]</option><option>text[]</option>
+</datalist>
+<script>
+const W=230,HH=34,RH=22;
+let S={tables:[]},sel=null,zoom=1,tab='sql',idN=0;
+const nid=()=>'i'+(++idN)+Math.random().toString(36).slice(2,6);
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tOf=id=>S.tables.find(t=>t.id===id);
+const cOf=(t,id)=>t&&t.cols.find(c=>c.id===id);
+const RES=new Set(['user','order','group','table','select','column','check','default','end','from','to','limit','offset','primary','references','unique','desc','asc','all','analyse','analyze','both','case','cast','create','current_user','distinct','do','else','for','grant','having','in','into','leading','not','null','on','only','or','placing','some','then','trailing','union','using','when','where','with']);
+const q=n=>(/^[a-z_][a-z0-9_]*$/.test(n)&&!RES.has(n))?n:'"'+String(n).replace(/"/g,'""')+'"';
+const qt=t=>(t.schema&&t.schema!=='public'?q(t.schema)+'.':'')+q(t.name);
+
+function mkCol(name,type,o={}){return Object.assign({id:nid(),name,type,pk:false,nn:false,uq:false,def:'',ref:null,del:'NO ACTION'},o)}
+function mkTable(name,x,y,cols,schema='public'){return {id:nid(),name,schema,x,y,cols}}
+
+function sample(){
+  const cli=mkTable('clientes',40,40,[
+    mkCol('id','bigserial',{pk:true}),mkCol('nome','varchar(120)',{nn:true}),
+    mkCol('email','varchar(255)',{nn:true,uq:true}),mkCol('criado_em','timestamptz',{nn:true,def:'now()'})]);
+  const prod=mkTable('produtos',40,260,[
+    mkCol('id','bigserial',{pk:true}),mkCol('sku','varchar(40)',{nn:true,uq:true}),
+    mkCol('descricao','text'),mkCol('preco','numeric(12,2)',{nn:true,def:'0'}),mkCol('ativo','boolean',{nn:true,def:'true'})]);
+  const ped=mkTable('pedidos',380,40,[
+    mkCol('id','bigserial',{pk:true}),mkCol('cliente_id','bigint',{nn:true,ref:{t:cli.id,c:cli.cols[0].id},del:'RESTRICT'}),
+    mkCol('status','varchar(20)',{nn:true,def:"'aberto'"}),mkCol('total','numeric(12,2)',{nn:true,def:'0'}),
+    mkCol('criado_em','timestamptz',{nn:true,def:'now()'})]);
+  const it=mkTable('itens_pedido',380,300,[
+    mkCol('pedido_id','bigint',{pk:true,nn:true,ref:{t:ped.id,c:ped.cols[0].id},del:'CASCADE'}),
+    mkCol('produto_id','bigint',{pk:true,nn:true,ref:{t:prod.id,c:prod.cols[0].id},del:'RESTRICT'}),
+    mkCol('quantidade','integer',{nn:true,def:'1'}),mkCol('preco_unit','numeric(12,2)',{nn:true})]);
+  return {tables:[cli,prod,ped,it]};
+}
+
+/* ---------- editor ---------- */
+function renderChips(){
+  $('#chips').innerHTML=S.tables.map(t=>`<span class="chip ${t.id===sel?'on':''}" data-id="${t.id}">${esc(t.name||'(sem nome)')}</span>`).join('')||'<span class="empty">Nenhuma tabela ainda.</span>';
+}
+function refOptions(t,c){
+  let o=`<option value="">— sem chave estrangeira —</option>`;
+  S.tables.forEach(x=>{ if(x.id===t.id)return; x.cols.forEach(y=>{
+    const v=x.id+'|'+y.id, on=c.ref&&c.ref.t===x.id&&c.ref.c===y.id;
+    o+=`<option value="${v}" ${on?'selected':''}>→ ${esc(x.name)}.${esc(y.name)}${y.pk?' (PK)':''}</option>`;});});
+  return o;
+}
+function renderEditor(){
+  renderChips();
+  const t=tOf(sel), ed=$('#editor');
+  if(!t){ed.innerHTML='<div class="empty">Crie ou selecione uma tabela para editar.</div>';return}
+  ed.innerHTML=`
+  <div class="sec">Tabela</div>
+  <div class="row"><label>Nome</label><input type="text" data-f="tname" value="${esc(t.name)}"></div>
+  <div class="row"><label>Schema</label><input type="text" data-f="tschema" value="${esc(t.schema)}">
+    <button class="sm danger" data-a="delT">Excluir tabela</button></div>
+  <div class="sec" style="margin-top:14px">Colunas <span class="spacer"></span><button class="sm primary" data-a="addC">+ Coluna</button></div>
+  ${t.cols.map(c=>`
+  <div class="col" data-cid="${c.id}">
+    <div class="l1"><input class="nm" type="text" data-f="name" value="${esc(c.name)}" placeholder="nome">
+      <input class="ty" type="text" list="types" data-f="type" value="${esc(c.type)}" placeholder="tipo">
+      <button class="sm danger" data-a="delC" title="Remover coluna">✕</button></div>
+    <div class="l2">
+      <label><input type="checkbox" data-f="pk" ${c.pk?'checked':''}>PK</label>
+      <label><input type="checkbox" data-f="nn" ${c.nn||c.pk?'checked':''} ${c.pk?'disabled':''}>NOT NULL</label>
+      <label><input type="checkbox" data-f="uq" ${c.uq?'checked':''}>UNIQUE</label>
+      <input class="df" type="text" data-f="def" value="${esc(c.def)}" placeholder="DEFAULT">
+    </div>
+    <div class="l3"><select data-f="ref">${refOptions(t,c)}</select>
+      ${c.ref?`<select data-f="del" title="ON DELETE">${['NO ACTION','CASCADE','SET NULL','RESTRICT'].map(v=>`<option ${c.del===v?'selected':''}>${v}</option>`).join('')}</select>`:''}</div>
+  </div>`).join('')||'<div class="empty">Sem colunas.</div>'}`;
+}
+function clearRefsTo(tid,cid){
+  S.tables.forEach(t=>t.cols.forEach(c=>{if(c.ref&&c.ref.t===tid&&(!cid||c.ref.c===cid))c.ref=null}));
+}
+$('#editor').addEventListener('input',e=>{
+  const f=e.target.dataset.f; if(!f)return;
+  const t=tOf(sel); if(!t)return;
+  if(f==='tname'){t.name=e.target.value;renderChips();renderOut();return}
+  if(f==='tschema'){t.schema=e.target.value.trim()||'public';renderOut();return}
+  const c=cOf(t,e.target.closest('.col').dataset.cid); if(!c)return;
+  if(f==='name'||f==='type'||f==='def'){c[f]=e.target.value;renderOut()}
+});
+$('#editor').addEventListener('change',e=>{
+  const f=e.target.dataset.f; if(!f)return;
+  const t=tOf(sel); if(!t)return;
+  if(f==='tname'||f==='tschema'||f==='name'){renderEditor();renderOut();return}
+  const col=e.target.closest('.col'); if(!col)return;
+  const c=cOf(t,col.dataset.cid); if(!c)return;
+  if(f==='pk'){c.pk=e.target.checked;if(c.pk)c.nn=true}
+  else if(f==='nn'||f==='uq'){c[f]=e.target.checked}
+  else if(f==='ref'){const v=e.target.value;if(!v)c.ref=null;else{const [a,b]=v.split('|');c.ref={t:a,c:b};
+      const rc=cOf(tOf(a),b); if(rc&&(!c.type||c.type==='text')) c.type=baseType(rc.type)}}
+  else if(f==='del'){c.del=e.target.value}
+  renderAll();
+});
+$('#editor').addEventListener('click',e=>{
+  const a=e.target.dataset.a; if(!a)return;
+  const t=tOf(sel); if(!t)return;
+  if(a==='addC'){t.cols.push(mkCol('coluna_'+(t.cols.length+1),'text'))}
+  if(a==='delC'){const id=e.target.closest('.col').dataset.cid;t.cols=t.cols.filter(c=>c.id!==id);clearRefsTo(t.id,id)}
+  if(a==='delT'){S.tables=S.tables.filter(x=>x.id!==t.id);clearRefsTo(t.id);sel=S.tables[0]?S.tables[0].id:null}
+  renderAll();
+});
+$('#chips').addEventListener('click',e=>{const id=e.target.dataset.id;if(id){sel=id;renderAll()}});
+$('#bAddT').onclick=()=>{
+  const n=S.tables.length+1;
+  const t=mkTable('tabela_'+n,40+(n%4)*260,40+Math.floor(n/4)*220,[mkCol('id','bigserial',{pk:true})]);
+  S.tables.push(t);sel=t.id;renderAll();
+};
+function baseType(ty){const l=String(ty).toLowerCase().trim();return l==='serial'?'integer':l==='bigserial'?'bigint':l==='smallserial'?'smallint':ty}
+
+/* ---------- diagram ---------- */
+function tH(t){return HH+t.cols.length*RH+6}
+function rowY(t,c){return t.y+HH+t.cols.indexOf(c)*RH+RH/2}
+function renderDiagram(){
+  let mx=0,my=0;
+  S.tables.forEach(t=>{mx=Math.max(mx,t.x+W);my=Math.max(my,t.y+tH(t))});
+  const w=Math.max(mx+80,600),h=Math.max(my+80,360);
+  const svg=$('#svg');
+  svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.setAttribute('width',w*zoom);svg.setAttribute('height',h*zoom);
+  let o='';
+  S.tables.forEach(s=>s.cols.forEach(c=>{
+    if(!c.ref)return;
+    const t=tOf(c.ref.t),rc=cOf(t,c.ref.c); if(!t||!rc)return;
+    const y1=rowY(s,c),y2=rowY(t,rc);
+    const right=(s.x+W/2)<=(t.x+W/2);
+    let x1,x2,d1,d2;
+    if(s===t){x1=s.x+W;x2=s.x+W;d1=1;d2=1}
+    else if(right){x1=s.x+W;x2=t.x;d1=1;d2=-1}
+    else{x1=s.x;x2=t.x+W;d1=-1;d2=1}
+    const k=s===t?60:Math.max(40,Math.abs(x2-x1)/2);
+    o+=`<path class="edge" d="M${x1},${y1} C${x1+d1*k},${y1} ${x2+d2*k},${y2} ${x2},${y2}"/>`;
+    o+=`<text class="card" x="${x1+d1*12-(d1<0?4:0)}" y="${y1-5}" text-anchor="${d1>0?'start':'end'}">${(c.uq||c.pk&&s.cols.filter(z=>z.pk).length===1)?'1':'N'}</text>`;
+    o+=`<text class="card" x="${x2+d2*12-(d2<0?4:0)}" y="${y2-5}" text-anchor="${d2>0?'start':'end'}">1</text>`;
+  }));
+  S.tables.forEach(t=>{
+    const h=tH(t);
+    o+=`<g class="tb ${t.id===sel?'sel':''}" data-id="${t.id}" transform="translate(${t.x},${t.y})">
+      <rect class="body" width="${W}" height="${h}" rx="7"/>
+      <path class="hd" d="M0,7 a7,7 0 0 1 7,-7 h${W-14} a7,7 0 0 1 7,7 v${HH-7} h-${W} z"/>
+      <text class="ht" x="12" y="${t.schema&&t.schema!=='public'?15:21}">${esc(t.name)}</text>
+      ${t.schema&&t.schema!=='public'?`<text class="hs" x="12" y="28">${esc(t.schema)}</text>`:''}`;
+    t.cols.forEach((c,i)=>{
+      const y=HH+i*RH;
+      if(i)o+=`<line class="rl" x1="0" x2="${W}" y1="${y}" y2="${y}"/>`;
+      const tag=c.pk&&c.ref?'PK·FK':c.pk?'PK':c.ref?'FK':'';
+      o+=`<text class="${c.pk?'tag-pk':'tag-fk'}" x="10" y="${y+15}">${tag}</text>
+      <text class="cn" x="${tag?(tag.length>2?44:28):12}" y="${y+15}" ${c.pk?'font-weight="600"':''}>${esc(c.name)}${(c.nn||c.pk)?'':'?'}</text>
+      <text class="ct" x="${W-10}" y="${y+15}" text-anchor="end">${esc(c.type.length>16?c.type.slice(0,15)+'…':c.type)}</text>`;
+    });
+    o+='</g>';
+  });
+  if(!S.tables.length)o='<text x="30" y="50" fill="currentColor" opacity=".5" font-size="14">Adicione uma tabela para começar o diagrama.</text>';
+  svg.innerHTML=o;
+  $('#zl').textContent=Math.round(zoom*100)+'%';
+}
+let drag=null;
+$('#svg').addEventListener('pointerdown',e=>{
+  const g=e.target.closest('.tb'); if(!g)return;
+  const t=tOf(g.dataset.id); if(!t)return;
+  drag={id:t.id,sx:e.clientX,sy:e.clientY,ox:t.x,oy:t.y,moved:false};
+  e.preventDefault();
+});
+window.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  const t=tOf(drag.id); const dx=(e.clientX-drag.sx)/zoom,dy=(e.clientY-drag.sy)/zoom;
+  if(Math.abs(dx)+Math.abs(dy)>3)drag.moved=true;
+  if(!drag.moved)return;
+  t.x=Math.max(0,Math.round(drag.ox+dx));t.y=Math.max(0,Math.round(drag.oy+dy));
+  renderDiagram();
+});
+window.addEventListener('pointerup',()=>{
+  if(!drag)return;
+  const id=drag.id,moved=drag.moved;drag=null;
+  if(sel!==id){sel=id;renderEditor()}
+  renderDiagram();if(moved)renderOut(true);
+});
+$('#bLayout').onclick=()=>{
+  const cols=3,gx=W+90;let y=40,i=0,rowMax=0;
+  S.tables.forEach(t=>{
+    const c=i%cols;t.x=40+c*gx;t.y=y;rowMax=Math.max(rowMax,tH(t));i++;
+    if(c===cols-1){y+=rowMax+50;rowMax=0}
+  });
+  renderAll();
+};
+$('#bZp').onclick=()=>{zoom=Math.min(2,+(zoom+.1).toFixed(1));renderDiagram()};
+$('#bZm').onclick=()=>{zoom=Math.max(.4,+(zoom-.1).toFixed(1));renderDiagram()};
+
+/* ---------- generators ---------- */
+function genSQL(){
+  const out=['-- Gerado por MADB','-- PostgreSQL',''];
+  const schemas=[...new Set(S.tables.map(t=>t.schema).filter(s=>s&&s!=='public'))];
+  schemas.forEach(s=>out.push(`CREATE SCHEMA IF NOT EXISTS ${q(s)};`));
+  if(schemas.length)out.push('');
+  S.tables.forEach(t=>{
+    const pks=t.cols.filter(c=>c.pk);
+    const lines=t.cols.map(c=>{
+      let l=`  ${q(c.name)} ${c.type||'text'}`;
+      if(c.pk&&pks.length===1)l+=' PRIMARY KEY';
+      else if(c.nn||c.pk)l+=' NOT NULL';
+      if(c.uq&&!(c.pk&&pks.length===1))l+=' UNIQUE';
+      if(c.def!=='')l+=` DEFAULT ${c.def}`;
+      return l;
+    });
+    if(pks.length>1)lines.push(`  CONSTRAINT ${q(t.name+'_pkey')} PRIMARY KEY (${pks.map(c=>q(c.name)).join(', ')})`);
+    out.push(`CREATE TABLE ${qt(t)} (\n${lines.join(',\n')}\n);`,'');
+  });
+  const fks=[],idx=[];
+  S.tables.forEach(t=>t.cols.forEach(c=>{
+    if(!c.ref)return;
+    const rt=tOf(c.ref.t),rc=cOf(rt,c.ref.c); if(!rt||!rc)return;
+    fks.push(`ALTER TABLE ${qt(t)}\n  ADD CONSTRAINT ${q(`${t.name}_${c.name}_fkey`)} FOREIGN KEY (${q(c.name)})\n  REFERENCES ${qt(rt)} (${q(rc.name)})${c.del&&c.del!=='NO ACTION'?` ON DELETE ${c.del}`:''};`);
+    if($('#optIdx').checked)idx.push(`CREATE INDEX ${q(`idx_${t.name}_${c.name}`)} ON ${qt(t)} (${q(c.name)});`);
+  }));
+  if(fks.length)out.push('-- Chaves estrangeiras',...fks.flatMap(f=>[f,'']));
+  if(idx.length)out.push('-- Índices',...idx,'');
+  if(!S.tables.length)out.push('-- (nenhuma tabela definida)');
+  return out.join('\n').replace(/\n{3,}/g,'\n\n').trimEnd()+'\n';
+}
+function genMMD(){
+  const nm=s=>String(s).replace(/[^A-Za-z0-9_]/g,'_')||'_';
+  const ty=s=>String(s).replace(/\(.*?\)/g,'').replace(/\[\]/g,'_arr').replace(/\s+/g,'_')||'text';
+  let o='erDiagram\n';
+  S.tables.forEach(t=>{
+    o+=`  ${nm(t.name)} {\n`;
+    t.cols.forEach(c=>{
+      const k=[c.pk&&'PK',c.ref&&'FK',(c.uq&&!c.pk)&&'UK'].filter(Boolean).join(',');
+      o+=`    ${ty(c.type)} ${nm(c.name)}${k?' '+k:''}\n`;
+    });
+    o+='  }\n';
+  });
+  S.tables.forEach(t=>t.cols.forEach(c=>{
+    if(!c.ref)return; const rt=tOf(c.ref.t); if(!rt)return;
+    const single=t.cols.filter(z=>z.pk).length===1&&c.pk;
+    const l=(c.nn||c.pk)?'||':'|o', r=(c.uq||single)?'o|':'o{';
+    o+=`  ${nm(rt.name)} ${l}--${r} ${nm(t.name)} : "${c.name}"\n`;
+  }));
+  return o;
+}
+function genJSON(){return JSON.stringify(S,null,2)}
+function normalize(raw){
+  if(!raw||!Array.isArray(raw.tables))throw new Error('JSON precisa ter a chave "tables" (lista).');
+  const tm={},cm={};
+  const tables=raw.tables.map((t,i)=>{
+    const nt={id:nid(),name:String(t.name||'tabela_'+(i+1)),schema:String(t.schema||'public'),x:+t.x||40+(i%3)*300,y:+t.y||40+Math.floor(i/3)*260,cols:[]};
+    tm[t.id]=nt.id;
+    nt.cols=(t.cols||[]).map(c=>{const nc=mkCol(String(c.name||'coluna'),String(c.type||'text'),{pk:!!c.pk,nn:!!c.nn||!!c.pk,uq:!!c.uq,def:c.def==null?'':String(c.def),del:c.del||'NO ACTION'});
+      cm[t.id+'|'+c.id]=nc.id;nc._r=c.ref;return nc});
+    return nt;
+  });
+  tables.forEach((t,i)=>t.cols.forEach(c=>{
+    const r=c._r;delete c._r;
+    if(r&&tm[r.t]&&cm[r.t+'|'+r.c])c.ref={t:tm[r.t],c:cm[r.t+'|'+r.c]};
+  }));
+  return {tables};
+}
+
+function warnings(){
+  const w=[],names={};
+  S.tables.forEach(t=>{
+    const k=(t.schema+'.'+t.name).toLowerCase();
+    names[k]=(names[k]||0)+1;
+    if(!t.name.trim())w.push('Há tabela sem nome.');
+    if(!t.cols.some(c=>c.pk))w.push(`"${t.name}" não tem chave primária.`);
+    const cn={};t.cols.forEach(c=>{const n=c.name.toLowerCase();cn[n]=(cn[n]||0)+1;
+      if(!c.name.trim())w.push(`"${t.name}" tem coluna sem nome.`);
+      if(c.ref){const rc=cOf(tOf(c.ref.t),c.ref.c);
+        if(rc&&baseType(rc.type).toLowerCase()!==baseType(c.type).toLowerCase())w.push(`FK ${t.name}.${c.name} (${c.type}) difere do tipo de ${tOf(c.ref.t).name}.${rc.name} (${rc.type}).`);
+        if(rc&&!rc.pk&&!rc.uq)w.push(`FK ${t.name}.${c.name} aponta para coluna sem PK/UNIQUE (o PostgreSQL vai recusar).`)}});
+    Object.entries(cn).forEach(([n,v])=>{if(v>1)w.push(`"${t.name}" tem coluna duplicada: ${n}.`)});
+  });
+  Object.entries(names).forEach(([n,v])=>{if(v>1)w.push(`Tabela duplicada: ${n}.`)});
+  return [...new Set(w)];
+}
+
+/* ---------- output ---------- */
+function renderOut(skipDiagram){
+  if(!skipDiagram)renderDiagram();
+  const ta=$('#code');
+  if(document.activeElement!==ta||tab!=='json'){
+    ta.value=tab==='sql'?genSQL():tab==='mmd'?genMMD():genJSON();
+  }
+  const w=warnings();
+  $('#warns').innerHTML=w.map(x=>'⚠ '+esc(x)).join('<br>');
+  try{localStorage.setItem('pgarch',JSON.stringify(S))}catch(e){}
+}
+function renderAll(){renderEditor();renderOut()}
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
+  tab=b.dataset.t;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===b));
+  $('#code').readOnly=tab!=='json';
+  $('#bApply').style.display=tab==='json'?'':'none';
+  $('#optIdxW').style.display=tab==='sql'?'':'none';
+  $('#code').value=tab==='sql'?genSQL():tab==='mmd'?genMMD():genJSON();
+});
+$('#optIdx').onchange=()=>renderOut(true);
+$('#bCopy').onclick=async()=>{
+  const ta=$('#code'),b=$('#bCopy');
+  try{await navigator.clipboard.writeText(ta.value)}catch(e){ta.select();try{document.execCommand('copy')}catch(_){}}
+  b.textContent='Copiado ✓';setTimeout(()=>b.textContent='Copiar',1400);
+};
+$('#bApply').onclick=()=>{
+  try{S=normalize(JSON.parse($('#code').value));sel=S.tables[0]?S.tables[0].id:null;renderAll();
+    $('#warns').textContent='';}
+  catch(e){$('#warns').innerHTML='⚠ JSON inválido: '+esc(e.message)}
+};
+$('#bSample').onclick=()=>{S=sample();sel=S.tables[0].id;renderAll()};
+$('#bClear').onclick=()=>{if($('#bClear').dataset.arm){S={tables:[]};sel=null;renderAll();$('#bClear').textContent='Limpar tudo';delete $('#bClear').dataset.arm}
+  else{$('#bClear').dataset.arm=1;$('#bClear').textContent='Confirmar limpar?';setTimeout(()=>{$('#bClear').textContent='Limpar tudo';delete $('#bClear').dataset.arm},2500)}};
+
+/* init */
+(function(){
+  try{const raw=localStorage.getItem('pgarch');if(raw){const p=normalize(JSON.parse(raw));if(p.tables.length)S=p}}catch(e){}
+  if(!S.tables.length)S=sample();
+  sel=S.tables[0].id;renderAll();
+})();
+</script>
+</body>
+</html>
