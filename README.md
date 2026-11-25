@@ -34,6 +34,43 @@ Para reabrir um modelo salvo, cole o JSON na aba **JSON** e clique em **Aplicar 
 
 O exemplo de e-commerce (clientes, produtos, pedidos e itens do pedido) está disponível ao criar uma nova arquitetura.
 
+## MCP do MADB (opcional)
+
+A pasta [`mcp/`](mcp/) traz um servidor MCP local que deixa o Claude (Claude Code ou Claude Desktop) modelar o banco por conversa: cria tabelas, colunas e chaves estrangeiras, valida o modelo e gera SQL, Mermaid e o JSON que o site importa. O servidor só lê e grava um arquivo de modelo, **não conecta a nenhum banco de dados**.
+
+**Instalação** (requer Node.js 18 ou superior):
+
+```
+cd mcp
+npm install
+```
+
+**Conectar ao Claude Code:**
+
+```
+claude mcp add madb --scope user -- node C:\caminho\para\madb\mcp\index.js
+```
+
+Ou, para um modelo por projeto, crie um `.mcp.json` na raiz do projeto:
+
+```json
+{
+  "mcpServers": {
+    "madb": {
+      "command": "node",
+      "args": ["C:\\caminho\\para\\madb\\mcp\\index.js"],
+      "env": { "MADB_MODELO": "C:\\projetos\\meu-banco\\modelo-madb.json" }
+    }
+  }
+}
+```
+
+Reinicie a sessão do Claude Code depois de configurar. Sem `MADB_MODELO`, o modelo fica em `~/.madb/modelo.json`.
+
+**Ferramentas disponíveis:** `madb_ver_modelo`, `madb_criar_tabela`, `madb_adicionar_coluna`, `madb_definir_fk`, `madb_remover_coluna`, `madb_remover_tabela`, `madb_validar`, `madb_gerar_sql`, `madb_gerar_mermaid`, `madb_exportar_json`, `madb_importar_json` e `madb_limpar`.
+
+**Fluxo sugerido:** peça ao Claude para modelar e validar o banco, peça *"exporte o JSON do madb"*, crie uma nova arquitetura no site, cole o texto na aba **JSON** e clique em **Aplicar JSON**. Mais detalhes em [`mcp/README.md`](mcp/README.md).
+
 ## Executar localmente
 
 Não há dependências, build nem servidor. Basta baixar o repositório e abrir o arquivo `index.html` no navegador.
@@ -47,7 +84,8 @@ O projeto é um site estático de um único arquivo e funciona em qualquer hospe
 ```
 madb/
 ├── index.html   # aplicação completa (HTML, CSS e JavaScript)
-└── README.md
+├── README.md
+└── mcp/         # servidor MCP local (index.js, package.json, README.md)
 ```
 
 ## Limitações do MVP
