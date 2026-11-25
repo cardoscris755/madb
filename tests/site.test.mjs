@@ -150,3 +150,19 @@ test('site: sincronização com arquivo vinculado detecta mudança, avisa confli
   await ev('pullFromFile(false)'); // mesma versão do arquivo: não pergunta de novo
   assert.equal($('#modal').hidden, true);
 });
+
+test('site: "sincronizar sozinho" sobrevive ao F5 e, sem permissão, avisa em vez de falhar calado', { skip }, async () => {
+  const { w, $, ev } = abrir();
+  const handle = { name: 'modelo.json', queryPermission: async () => 'prompt', requestPermission: async () => 'granted',
+    getFile: async () => ({ lastModified: 1, name: 'modelo.json', text: async () => ex('valido-completo.json'), size: 10 }) };
+  w.__h = handle;
+  ev(`cur().link={name:'modelo.json'};handles[cur().id]=__h;link={handle:__h};renderStatus();`);
+  const c = $('#optAuto'); c.checked = true; c.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 30));
+  const salvo = JSON.parse(w.localStorage.getItem('madb_ws_v1'));
+  assert.equal(salvo.ws[0].auto, true, 'a escolha foi gravada');
+  assert.equal(salvo.ws[0].link.name, 'modelo.json');
+  // leitura automática sem permissão não pede nada nem quebra: mostra o aviso
+  await ev('pullFromFile(false)');
+  assert.match($('#origin').textContent, /nova permissão/);
+});

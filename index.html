@@ -793,7 +793,7 @@ function renderStatus(){
   const w=cur();if(!w)return;
   const o=w.origin||{text:'edição local',at:Date.now()};
   const dirty=isDirty();
-  $('#origin').innerHTML=`Origem: <b>${esc(o.text)}</b> · ${hhmm(o.at)}`+(w.link?` · arquivo vinculado: <b>${esc(w.link.name)}</b>`:'')+(dirty?' · <span style="color:var(--warn)">alterações locais ainda não gravadas no arquivo</span>':'');
+  $('#origin').innerHTML=`Origem: <b>${esc(o.text)}</b> · ${hhmm(o.at)}`+(w.link?` · arquivo vinculado: <b>${esc(w.link.name)}</b>`:'')+(dirty?' · <span style="color:var(--warn)">alterações locais ainda não gravadas no arquivo</span>':'')+(w.link&&!link?' · <span style="color:var(--warn)">o navegador não guardou o acesso ao arquivo: clique em <b>Vincular arquivo…</b> de novo</span>':'')+(link&&permLost?' · <span style="color:var(--warn)">o navegador pediu nova permissão: clique em <b>Recarregar do arquivo</b></span>':'');
   $('#bLink').hidden=!FSA||!!link;
   $('#bReload').hidden=!link;
   $('#bSave').hidden=!link;
@@ -810,31 +810,35 @@ async function loadLink(){
   link=null;const w=cur();
   if(w&&w.link){const h=handles[w.id]||await idbGet(w.id);if(h&&cur()===w){handles[w.id]=h;link={handle:h}}}
   renderStatus();
+  if(w&&w.auto&&link)pullFromFile(false);
 }
-async function ensurePerm(mode){
+let permLost=false;
+async function ensurePerm(mode,ask){
   if(!link)return false;
   try{
     const o={mode:mode||'read'};
     if(await link.handle.queryPermission(o)==='granted')return true;
+    if(!ask)return false;
     return (await link.handle.requestPermission(o))==='granted';
   }catch(e){return false}
 }
 $('#bLink').onclick=async()=>{
   try{
     const [h]=await window.showOpenFilePicker({types:[{description:'Modelo MADB (JSON)',accept:{'application/json':['.json']}}]});
-    const w=cur();w.link={name:h.name};await idbSet(w.id,h);link={handle:h};
+    const w=cur();w.link={name:h.name};await idbSet(w.id,h);link={handle:h};saveDB();
     await pullFromFile(true);
   }catch(e){if(e&&e.name!=='AbortError')showImport({errors:[{path:'(arquivo)',message:'Não consegui vincular o arquivo: '+e.message}],warnings:[],notes:[]},'arquivo')}
 };
 $('#bReload').onclick=()=>pullFromFile(true);
-$('#optAuto').onchange=e=>{cur().auto=e.target.checked;if(e.target.checked)pullFromFile(false)};
+$('#optAuto').onchange=e=>{cur().auto=e.target.checked;saveDB();renderStatus();if(e.target.checked)pullFromFile(true)};
 function keepPositions(m){ // mantém onde o usuário colocou as tabelas
   m.tables.forEach(t=>{const old=tOf(t.id);if(old&&old.x!=null){t.x=old.x;t.y=old.y}});return m;
 }
 async function pullFromFile(manual){
   if(!link||pulling)return;pulling=true;
   try{
-    if(!await ensurePerm('read')){if(manual)showImport({errors:[{path:'(arquivo)',message:'Sem permissão para ler o arquivo vinculado.'}],warnings:[],notes:[]},cur().link.name);return}
+    if(!await ensurePerm('read',manual)){permLost=true;renderStatus();if(manual)showImport({errors:[{path:'(arquivo)',message:'Sem permissão para ler o arquivo vinculado.'}],warnings:[],notes:[]},cur().link.name);return}
+    permLost=false;
     const file=await link.handle.getFile(),w=cur();
     if(!manual&&file.lastModified===w.fileStamp)return;
     const text=await file.text(),r=MADB.load(text);
@@ -864,7 +868,7 @@ function stripXY(o){o.tables.forEach(t=>{delete t.x;delete t.y});return o}
 $('#bSave').onclick=async()=>{
   if(!link)return;
   try{
-    if(!await ensurePerm('readwrite'))return;
+    if(!await ensurePerm('readwrite',true))return;
     const w=cur(),file=await link.handle.getFile();
     const write=async()=>{
       const ws=await link.handle.createWritable();await ws.write(genJSON());await ws.close();
