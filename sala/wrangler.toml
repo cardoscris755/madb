@@ -1,0 +1,12 @@
+name = "madb-sala"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# Uma instância de Room por sala. O estado da sala fica no próprio Durable Object.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

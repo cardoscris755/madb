@@ -163,6 +163,17 @@ header{padding:8px 14px;gap:14px}
 .userp .ul input,.userp .ul select{font-size:14px;color:var(--text);padding:6px 8px}
 .userp .un{font-size:11.5px;color:var(--muted);margin:0}
 .hint{display:none}
+#salap{width:320px;left:auto!important;right:12px;top:52px}
+#salap .uh{font-weight:650;margin-bottom:10px}
+#salap .ul{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);margin-bottom:10px}
+#salap .ul input{font-size:12px;color:var(--text);padding:6px 8px}
+#salap .un{font-size:11.5px;color:var(--muted);margin:0 0 8px}
+#salap .pr2{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+#salap .pr2 .spacer{flex:1}
+.pchips{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
+.pchip{border:1px solid;border-radius:99px;padding:2px 9px;font-size:12px;color:var(--text)}
+.sm.on{border-color:var(--accent);color:var(--accent)}
+.rcn{font:700 11px system-ui,sans-serif;paint-order:stroke;stroke:#0a0a0a;stroke-width:3px}
 .relhit{fill:none;stroke:transparent;stroke-width:14;cursor:pointer}
 .edge{pointer-events:none}
 .relhit:hover+.edge{stroke-width:2.6;opacity:1}
@@ -183,6 +194,7 @@ header{padding:8px 14px;gap:14px}
     <button id="bWsDel" class="sm ghost danger" data-tip="Excluir a arquitetura atual">Excluir</button>
   </div>
   <div class="spacer"></div>
+  <button id="bShare" class="sm" data-tip="Compartilhar esta arquitetura com um colega (edição em tempo real)">Compartilhar</button>
   <button id="bClear" class="sm ghost danger" data-tip="Apagar todas as tabelas desta arquitetura (pede confirmação)">Esvaziar</button>
   <button id="bUser" class="avatar" data-tip="Seu perfil e preferências" aria-label="Perfil">?</button>
 </header>
@@ -190,6 +202,7 @@ header{padding:8px 14px;gap:14px}
   <div class="uh">Seu perfil</div>
   <label class="ul">Nome<input type="text" id="uName" maxlength="60" placeholder="Como você quer aparecer"></label>
   <label class="ul">Paleta de cores<select id="palSel" aria-label="Paleta de cores"></select></label>
+  <label class="ul">Servidor de sala<input type="text" id="uSrv" placeholder="wss://madb-sala.seu-usuario.workers.dev"></label>
   <p class="un">Guardado só neste navegador.</p>
 </div>
 <div class="modal-bg" id="modal" hidden>
@@ -214,6 +227,7 @@ header{padding:8px 14px;gap:14px}
 <div class="dropov" id="dropov" hidden>Solte o arquivo .json para importar</div>
 <div class="pop" id="pop" hidden></div>
 <div class="pop" id="relp" hidden></div>
+<div class="pop userp" id="salap" hidden></div>
 <main>
   <aside>
     <div class="sec">Editor <span id="selName" style="text-transform:none;letter-spacing:0;color:var(--text);font-size:13px;margin-left:6px"></span><span class="spacer"></span><button class="sm ghost" id="bClose" title="Fechar editor">×</button></div>
@@ -902,13 +916,14 @@ $('#bZm').onclick=()=>setZoom(zoom/1.2);
 
 /* câmera: zoom e pan sem barra de rolagem. O ponto sob o cursor fica parado ao dar zoom */
 const worldT=()=>`translate(${panX} ${panY}) scale(${zoom})`;
-const worldG=o=>`<g id="world" transform="${worldT()}">${o}</g>`;
+const worldG=o=>`<g id="world" transform="${worldT()}">${o}<g id="rcur"></g></g>`;
 function applyView(){
   const w=$('#world');if(w)w.setAttribute('transform',worldT());
   const cv=$('#canvas');
   cv.style.backgroundSize=`${20*zoom}px ${20*zoom}px`;
   cv.style.backgroundPosition=`${panX}px ${panY}px`;
   $('#zl').textContent=Math.round(zoom*100)+'%';
+  drawCursors();
 }
 function setZoom(z,cx,cy){
   const cv=$('#canvas');
@@ -953,14 +968,188 @@ cvs.addEventListener('pointercancel',endPan);
 $('#bModel').onclick=()=>{sel=sel===MODEL?null:MODEL;closePop();renderAll()};
 $('#bClose').onclick=()=>{sel=null;closePop();renderAll()};
 
+/* ---------- colaboração (sala em tempo real) ---------- */
+const SRV_KEY='madb_srv';
+const PEER_COLORS=['#facc15','#60a5fa','#f472b6','#34d399','#fb923c','#a78bfa','#f87171','#22d3ee'];
+const SALA={ws:null,room:null,srv:'',me:'',name:'',color:'',peers:{},lastT:{},lastOrder:'',lastMeta:'',applying:false,ready:false,pendingEdit:false,retry:null};
+const srvPadrao=()=>{try{return localStorage.getItem(SRV_KEY)||''}catch(e){return ''}};
+const salaAtiva=()=>!!(SALA.ws&&SALA.ws.readyState===1);
+const editando=()=>{const a=document.activeElement;return !!a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.tagName==='SELECT')&&!!a.closest('#editor,#pop,#relp')};
+function randId(){const a=new Uint8Array(12);crypto.getRandomValues(a);return Array.from(a,b=>'abcdefghijklmnopqrstuvwxyz0123456789'[b%36]).join('')}
+function applyMeta(meta){
+  S.options=meta.options||{};S.schemas=meta.schemas||[];S.enums=meta.enums||[];S.functions=meta.functions||[];
+  SALA.lastMeta=JSON.stringify({options:S.options,schemas:S.schemas,enums:S.enums,functions:S.functions});
+}
+function salaConectar(room,srv){
+  salaSair();
+  SALA.room=room;SALA.srv=srv;SALA.me=Math.random().toString(36).slice(2,10);
+  SALA.name=(loadUser().name||'').trim()||'Visitante';
+  SALA.color=PEER_COLORS[parseInt(SALA.me,36)%PEER_COLORS.length];
+  SALA.peers={};SALA.lastT={};SALA.lastOrder='';SALA.lastMeta='';SALA.ready=false;
+  const ws=new WebSocket(srv.replace(/\/+$/,'')+'/room/'+room);
+  SALA.ws=ws;
+  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch(_){return}salaRecebe(m)};
+  ws.onopen=()=>setSalaStatus();
+  ws.onclose=()=>{
+    if(SALA.ws!==ws)return;
+    SALA.ws=null;SALA.ready=false;SALA.peers={};drawCursors();setSalaStatus();
+    SALA.retry=setTimeout(()=>{const w=cur();if(w&&w.room&&w.room.id===room&&!SALA.ws)salaConectar(room,srv)},3000);
+  };
+  setSalaStatus();
+}
+function salaSair(){
+  clearTimeout(SALA.retry);
+  const ws=SALA.ws;SALA.ws=null;SALA.room=null;SALA.ready=false;SALA.peers={};
+  if(ws){try{ws.close()}catch(_){}}
+  drawCursors();setSalaStatus();
+}
+/* a sala acompanha a arquitetura ativa */
+function salaSincronizar(){
+  const w=cur(),want=w&&w.room?w.room.id:null;
+  if(SALA.room===want)return;
+  if(want)salaConectar(w.room.id,w.room.srv);else salaSair();
+}
+/* envia só o que mudou desde a última troca */
+function salaEnviar(){
+  if(!salaAtiva()||!SALA.ready||SALA.applying)return;
+  const set={},now={};
+  S.tables.forEach(t=>{const s=JSON.stringify(t);now[t.id]=s;if(SALA.lastT[t.id]!==s)set[t.id]=JSON.parse(s)});
+  const del=Object.keys(SALA.lastT).filter(id=>!(id in now));
+  const order=S.tables.map(t=>t.id),orderS=JSON.stringify(order);
+  const meta={options:S.options||{},schemas:S.schemas||[],enums:S.enums||[],functions:S.functions||[]},metaS=JSON.stringify(meta);
+  const msg={type:'patch'};let any=false;
+  if(Object.keys(set).length||del.length){msg.set=set;msg.del=del;any=true}
+  if(orderS!==SALA.lastOrder){msg.order=order;any=true}
+  if(metaS!==SALA.lastMeta){msg.meta=meta;any=true}
+  if(!any)return;
+  SALA.lastT=now;SALA.lastOrder=orderS;SALA.lastMeta=metaS;
+  SALA.ws.send(JSON.stringify(msg));
+}
+/* aplica o estado inteiro (state) ou uma mudança (patch) vinda de um colega */
+function salaAplicar(m,ids){
+  SALA.applying=true;
+  try{
+    if(m.type==='state'){
+      const st=m.state;SALA.lastT={};
+      ids.forEach(id=>{SALA.lastT[id]=JSON.stringify(st.tables[id])});
+      S.tables=ids.map(id=>st.tables[id]);
+      if(st.meta)applyMeta(st.meta);
+      SALA.lastOrder=JSON.stringify(ids);
+    }else{
+      const map=new Map(S.tables.map(t=>[t.id,t]));
+      Object.entries(m.set||{}).forEach(([id,t])=>{map.set(id,t);SALA.lastT[id]=JSON.stringify(t)});
+      (m.del||[]).forEach(id=>{map.delete(id);delete SALA.lastT[id]});
+      const order=Array.isArray(m.order)?m.order:[...map.keys()];
+      S.tables=order.filter(id=>map.has(id)).map(id=>map.get(id)).concat([...map.keys()].filter(id=>!order.includes(id)).map(id=>map.get(id)));
+      if(Array.isArray(m.order))SALA.lastOrder=JSON.stringify(m.order);
+      if(m.meta)applyMeta(m.meta);
+    }
+    if(sel!==null&&sel!==MODEL&&!tOf(sel))sel=null;
+    if(!editando())renderEditor();else SALA.pendingEdit=true;
+    cur().model=S;
+    renderOut();
+  }finally{SALA.applying=false}
+}
+function salaRecebe(m){
+  if(m.type==='state'){
+    const st=m.state||{tables:{},order:[]};
+    const ids=(st.order||[]).filter(id=>st.tables&&st.tables[id]).concat(Object.keys(st.tables||{}).filter(id=>!(st.order||[]).includes(id)));
+    SALA.ready=true;
+    if(!ids.length){
+      // sala nova: sobe o modelo local
+      if(S.tables.length){SALA.lastT={};SALA.lastOrder='';SALA.lastMeta='';salaEnviar()}
+      return;
+    }
+    salaAplicar(m,ids);
+    return;
+  }
+  if(!SALA.ready)return;
+  if(m.type==='patch')salaAplicar(m);
+  else if(m.type==='cur'){
+    if(m.id===SALA.me)return;
+    SALA.peers[m.id]={name:m.name,color:m.color,x:m.x,y:m.y};
+    drawCursors();
+  }
+  else if(m.type==='leave'){delete SALA.peers[m.id];drawCursors();setSalaStatus()}
+}
+/* cursores dos colegas, em coordenadas do diagrama (tamanho constante na tela) */
+function drawCursors(){
+  const g=$('#rcur');if(!g)return;
+  const k=1/zoom;
+  g.innerHTML=Object.values(SALA.peers).map(p=>`<g transform="translate(${p.x} ${p.y}) scale(${k})"><path d="M0,0 L0,16 L4.5,12.3 L8,19 L10.8,17.7 L7.4,11 L13,11 Z" fill="${p.color}" stroke="#0a0a0a" stroke-width="1"/><text x="16" y="20" fill="${p.color}" class="rcn">${esc(p.name)}</text></g>`).join('');
+}
+let curT=0;
+$('#canvas').addEventListener('pointermove',e=>{
+  if(!salaAtiva()||!SALA.ready)return;
+  const now=performance.now();if(now-curT<50)return;curT=now;
+  const r=$('#canvas').getBoundingClientRect();
+  SALA.ws.send(JSON.stringify({type:'cur',id:SALA.me,name:SALA.name,color:SALA.color,x:Math.round((e.clientX-r.left-panX)/zoom),y:Math.round((e.clientY-r.top-panY)/zoom)}));
+});
+$('#canvas').addEventListener('pointerleave',()=>{
+  if(salaAtiva()&&SALA.ready)SALA.ws.send(JSON.stringify({type:'cur',id:SALA.me,hide:true}));
+});
+$('#editor').addEventListener('focusout',()=>setTimeout(()=>{if(SALA.pendingEdit&&!editando()){SALA.pendingEdit=false;renderEditor()}},0));
+
+function salaCriar(){
+  const srv=srvPadrao().trim();
+  if(!/^wss?:\/\//.test(srv)){
+    openModal({title:'Servidor de sala',input:false,ok:'OK',msg:'Informe o endereço do servidor de sala em "Seu perfil" (começa com wss://) antes de compartilhar.'});
+    return false;
+  }
+  cur().room={id:randId(),srv};
+  saveDB();salaSincronizar();
+  return true;
+}
+function setSalaStatus(){
+  const b=$('#bShare');if(!b)return;
+  const w=cur(),on=!!(w&&w.room);
+  b.textContent=on?`● Sala · ${Object.keys(SALA.peers).length+1}`:'Compartilhar';
+  b.classList.toggle('on',on);
+  if(!$('#salap').hidden)paintSala();
+}
+function paintSala(){
+  const p=$('#salap'),w=cur(),r=w&&w.room;
+  if(!r){p.innerHTML=`<div class="uh">Compartilhar</div>
+    <p class="un">Crie uma sala para um colega editar esta arquitetura com você, em tempo real.</p>
+    <div class="pr2"><span class="spacer"></span><button class="sm primary" data-s="criar">Criar sala</button></div>`;return}
+  const link=`${location.origin}${location.pathname}?sala=${encodeURIComponent(r.id)}&srv=${encodeURIComponent(r.srv)}`;
+  const estado=salaAtiva()?'● conectado':'○ reconectando…';
+  const peers=Object.values(SALA.peers).map(x=>`<span class="pchip" style="border-color:${x.color}">${esc(x.name)}</span>`).join('')||'<span class="un">Só você por enquanto</span>';
+  p.innerHTML=`<div class="uh">Sala · ${estado}</div>
+    <label class="ul">Link para o colega<input type="text" id="salaLink" readonly value="${esc(link)}"></label>
+    <div class="pr2"><button class="sm primary" data-s="copiar">Copiar link</button></div>
+    <div class="ul">Na sala<div class="pchips">${peers}</div></div>
+    <p class="un">Quem tiver o link pode editar. Não há login por enquanto.</p>
+    <div class="pr2"><span class="spacer"></span><button class="sm danger" data-s="sair">Sair da sala</button></div>`;
+}
+$('#bShare').onclick=e=>{
+  e.stopPropagation();
+  const p=$('#salap');
+  if(!cur().room){if(!salaCriar())return;p.hidden=false;paintSala();return}
+  p.hidden=!p.hidden;if(!p.hidden)paintSala();
+};
+$('#salap').addEventListener('click',e=>{
+  const a=e.target.dataset.s;if(!a)return;
+  if(a==='criar'){salaCriar();paintSala()}
+  else if(a==='sair'){cur().room=null;saveDB();loadLink();$('#salap').hidden=true}
+  else if(a==='copiar'){
+    const t=$('#salaLink');
+    const ok=()=>{e.target.textContent='Copiado ✓';setTimeout(()=>e.target.textContent='Copiar link',1400)};
+    navigator.clipboard?navigator.clipboard.writeText(t.value).then(ok,()=>{t.select();document.execCommand('copy');ok()}):(t.select(),document.execCommand('copy'),ok());
+  }
+});
+document.addEventListener('pointerdown',e=>{if(!$('#salap').hidden&&!e.target.closest('#salap,#bShare'))$('#salap').hidden=true});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')$('#salap').hidden=true});
+
 /* ---------- perfil (só neste navegador) ---------- */
 const USER_KEY='madb_user';
 function loadUser(){try{return JSON.parse(localStorage.getItem(USER_KEY))||{}}catch(e){return {}}}
 function paintAvatar(){const n=String(loadUser().name||'').trim();$('#bUser').textContent=n?n[0].toUpperCase():'?'}
 $('#bUser').onclick=e=>{
   e.stopPropagation();const p=$('#userp');
-  p.hidden=!p.hidden;if(!p.hidden)$('#uName').value=loadUser().name||'';
+  p.hidden=!p.hidden;if(!p.hidden){$('#uName').value=loadUser().name||'';$('#uSrv').value=srvPadrao()}
 };
+$('#uSrv').oninput=e=>{try{localStorage.setItem(SRV_KEY,e.target.value.trim())}catch(_){}};
 $('#uName').oninput=e=>{try{localStorage.setItem(USER_KEY,JSON.stringify({name:e.target.value.slice(0,60)}))}catch(_){}paintAvatar()};
 document.addEventListener('pointerdown',e=>{if(!$('#userp').hidden&&!e.target.closest('#userp,#bUser'))$('#userp').hidden=true});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')$('#userp').hidden=true});
@@ -1084,6 +1273,7 @@ function cur(){return DB.ws.find(w=>w.id===DB.active)}
 function saveDB(){
   const w=cur();if(!w)return;
   w.model=S;
+  salaEnviar();
   try{localStorage.setItem(KEY,JSON.stringify(DB,(k,v)=>k==='handle'?undefined:v))}catch(e){}
 }
 function renderWs(){
@@ -1176,6 +1366,7 @@ async function idbSet(k,v){handles[k]=v;try{const d=await idb();await new Promis
 async function idbGet(k){try{const d=await idb();return await new Promise((res,rej)=>{const r=d.transaction('h').objectStore('h').get(k);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}catch(e){return null}}
 async function idbDel(k){delete handles[k];try{const d=await idb();d.transaction('h','readwrite').objectStore('h').delete(k)}catch(e){}}
 async function loadLink(){
+  salaSincronizar();
   link=null;const w=cur();
   if(w&&w.link){const h=handles[w.id]||await idbGet(w.id);if(h&&cur()===w){handles[w.id]=h;link={handle:h}}}
   renderStatus();
@@ -1260,7 +1451,7 @@ setInterval(()=>{const w=cur();if(w&&w.auto&&link&&!document.hidden&&$('#modal')
       DB.ws=(p.ws||[]).map(w=>{
         const n=MADB.normalize(w.model||{tables:[]});
         if(!n.model){try{localStorage.setItem('madb_backup_'+(w.id||nid()),JSON.stringify(w.model))}catch(e){}}
-        return {id:w.id||nid(),name:String(w.name||'Arquitetura'),model:n.model||MADB.emptyModel(),origin:w.origin,link:w.link,auto:!!w.auto,syncHash:w.syncHash,fileStamp:w.fileStamp};
+        return {id:w.id||nid(),name:String(w.name||'Arquitetura'),model:n.model||MADB.emptyModel(),room:w.room,origin:w.origin,link:w.link,auto:!!w.auto,syncHash:w.syncHash,fileStamp:w.fileStamp};
       });
       DB.active=p.active;
     }else{
@@ -1269,6 +1460,12 @@ setInterval(()=>{const w=cur();if(w&&w.auto&&link&&!document.hidden&&$('#modal')
     }
   }catch(e){}
   if(!DB.ws.length){DB.ws=[{id:nid(),name:'Exemplo e-commerce',model:sample(),origin:{text:'exemplo do MADB',at:Date.now()}}]}
+  const qp=new URLSearchParams(location.search),sid=qp.get('sala'),ssrv=qp.get('srv')||'';
+  if(sid&&/^[a-z0-9_-]{12,64}$/i.test(sid)&&/^wss?:\/\//.test(ssrv)){
+    let jw=DB.ws.find(x=>x.room&&x.room.id===sid);
+    if(!jw){jw=newWs('Sala compartilhada',MADB.emptyModel());jw.room={id:sid,srv:ssrv}}
+    DB.active=jw.id;
+  }
   if(!DB.ws.some(w=>w.id===DB.active))DB.active=DB.ws[0].id;
   S=cur().model;sel=null;
   syncNaming();

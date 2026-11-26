@@ -1,0 +1,12 @@
+{
+  "name": "madb-sala",
+  "private": true,
+  "description": "Servidor de sala do MADB (edição colaborativa) em Cloudflare Workers + Durable Objects",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
