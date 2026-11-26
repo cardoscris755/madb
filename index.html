@@ -238,6 +238,7 @@ header{padding:8px 14px;gap:14px}
       <div class="toolbar">
         <button class="sm primary" id="bAddT" data-tip="Criar uma tabela">+ Tabela</button>
         <button class="sm" id="bModel" data-tip="Schemas, enums, funções e opções do modelo">Modelo</button>
+        <button class="sm" id="bEnum" data-tip="Criar um tipo enum (lista de valores fixos)">+ Enum</button>
         <button class="sm" id="bLayout" data-tip="Organizar as tabelas em colunas por schema">Organizar</button>
         <button class="sm" id="bFit" data-tip="Enquadrar tudo na tela">Ajustar</button>
         <span class="sep"></span>
@@ -718,7 +719,7 @@ function renderDiagram(){
   S.tables.forEach(t=>{
     const extra=t.id===sel;
     x0=Math.min(x0,t.x);y0=Math.min(y0,t.y);
-    x1=Math.max(x1,t.x+W+(extra?40:0));y1=Math.max(y1,t.y+tH(t)+(extra?34:0));
+    x1=Math.max(x1,t.x+W+(extra?40:0));y1=Math.max(y1,t.y+tH(t)+(extra?76:0));
   });
   if(!S.tables.length){x0=0;y0=0;x1=320;y1=240}
   const cw=x1-x0,ch=y1-y0;
@@ -749,7 +750,8 @@ function renderDiagram(){
     });
   });
   S.tables.forEach(t=>{
-    const h=tH(t),sub=t.partition?'particionada':'';
+    const h=tH(t),nChk=(t.constraints||[]).filter(k=>k.kind==='check').length,nFk=(t.constraints||[]).filter(k=>k.kind==='fk').length,nTrg=(t.triggers||[]).length;
+    const sub=[t.partition?'particionada':'',nChk?nChk+' check':'',nFk?nFk+' FK comp.':'',nTrg?nTrg+' trigger':''].filter(Boolean).join(' · ');
     const compFk=new Set();(t.constraints||[]).forEach(k=>{if(k.kind==='fk')k.cols.forEach(i=>compFk.add(i))});
     o+=`<g class="tb ${t.id===sel?'sel':''}" data-id="${t.id}" transform="translate(${t.x},${t.y})">
       <rect class="body" width="${W}" height="${h}" rx="7"/>
@@ -774,6 +776,9 @@ function renderDiagram(){
       o+=`<g class="fab" data-a="pickCol" data-cid="${c.id}" transform="translate(${st.x+W+8},${st.y+HH+i*RH+3})"><title>Editar coluna</title><circle cx="9" cy="9" r="9"/><text x="9" y="13" text-anchor="middle">✎</text></g>`;
     });
     o+=`<g class="fab pill" data-a="addCol" transform="translate(${st.x+W/2-46},${st.y+tH(st)+8})"><rect width="92" height="22" rx="11"/><text x="46" y="15" text-anchor="middle">+ coluna</text></g>`;
+    const QK=[["chk","+ CHECK"],["fk","+ FK composta"],["trg","+ trigger"],["part","+ partição"]].map(([k,l])=>({k,l,w:Math.round(l.length*6.4+22)}));
+    const tot=QK.reduce((a,b)=>a+b.w,0)+(QK.length-1)*6;let qx=st.x+W/2-tot/2;
+    QK.forEach(q=>{o+=`<g class="fab pill" data-a="quick" data-q="${q.k}" transform="translate(${qx},${st.y+tH(st)+36})"><rect width="${q.w}" height="22" rx="11"/><text x="${q.w/2}" y="15" text-anchor="middle">${q.l}</text></g>`;qx+=q.w+6});
   }
   svg.innerHTML=worldG(o);applyView();
 }
@@ -812,6 +817,7 @@ $('#svg').addEventListener('click',e=>{
   const a=e.target.closest('[data-a]');if(!a)return;
   const t=tOf(sel);if(!t)return;
   if(a.dataset.a==='addCol'){histBefore(null);const c=mkCol(t,'coluna_'+(t.cols.length+1),'text');renderAll();openPop(t,c)}
+  else if(a.dataset.a==='quick'){histBefore(null);quick(a.dataset.q,t)}
   else if(a.dataset.a==='pickCol'){const c=cOf(t,a.dataset.cid);if(c)openPop(t,c,a)}
 });
 
@@ -828,7 +834,7 @@ function openPop(t,c,anchor){
       <label><input type="checkbox" data-pp="nn" ${c.nn||c.pk?'checked':''} ${c.pk?'disabled':''}>NOT NULL</label>
       <label><input type="checkbox" data-pp="uq" ${c.uq?'checked':''}>UNIQUE</label></div>
     <div class="pr2"><span class="muted">${esc(t.name)}.${esc(c.name)}</span><span class="spacer"></span>
-      <button class="sm danger" data-pp="del">Remover</button><button class="sm" data-pp="close">Fechar</button></div>`;
+      <button class="sm" data-pp="enum" data-tip="Criar um enum e usar como tipo desta coluna">+ enum</button><button class="sm danger" data-pp="del">Remover</button><button class="sm" data-pp="close">Fechar</button></div>`;
   p.hidden=false;
   const a=anchor||document.querySelector(`#svg [data-a="pickCol"][data-cid="${c.id}"]`)||$('#svg');
   const r=a.getBoundingClientRect();
@@ -850,6 +856,8 @@ $('#pop').addEventListener('change',e=>{
 $('#pop').addEventListener('click',e=>{
   const f=e.target.dataset.pp,{t,c}=popCol();if(!c||!f)return;
   if(f==='close')closePop();
+  else if(f==='enum'){openModal({title:'Novo enum para esta coluna',msg:'Nome do tipo (ex.: status_pedido). A coluna passa a usar esse tipo.',value:'novo_enum',ok:'Criar',
+    onOk:name=>{const n=String(name||'').trim().replace(/\s+/g,'_');if(!n)return;histBefore(null);S.enums.push({id:MADB.newId(S,'enum'),schema:'public',name:n,values:['valor1','valor2']});c.type=n;renderAll()}})}
   else if(f==='del'){confirmDel(`a coluna "${c.name}"`,()=>{t.cols=t.cols.filter(x=>x.id!==c.id);prune();closePop();renderAll()})}
 });
 document.addEventListener('pointerdown',e=>{if(!$('#pop').hidden&&!e.target.closest('#pop,[data-a]'))closePop()});
@@ -901,6 +909,24 @@ $('#relp').addEventListener('click',e=>{
 });
 document.addEventListener('pointerdown',e=>{if(!$('#relp').hidden&&!e.target.closest('#relp,[data-rel]'))closeRel()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeRel()});
+
+/* ---------- ações rápidas: CHECK, FK composta, trigger, partição, enum ---------- */
+function quick(q,t){
+  t.constraints=t.constraints||[];
+  let sec='';
+  if(q==='chk'){t.constraints.push({id:MADB.newId(S,'constraint',t),name:'ck_'+t.name+'_'+(t.constraints.length+1),kind:'check',expr:''});sec='[data-k=con]'}
+  else if(q==='fk'){const rt=S.tables.find(x=>x.id!==t.id)||t;t.constraints.push({id:MADB.newId(S,'constraint',t),name:'fk_'+t.name+'_'+(t.constraints.length+1),kind:'fk',cols:[],ref:{t:rt.id,cols:[]},del:'NO ACTION'});sec='[data-k=con]'}
+  else if(q==='trg'){(t.triggers=t.triggers||[]).push({id:MADB.newId(S,'trigger',t),name:'tg_'+t.name+'_'+((t.triggers||[]).length+1),timing:'BEFORE',events:['UPDATE'],level:'ROW',function:S.functions[0]?S.functions[0].schema+'.'+S.functions[0].name:''});sec='[data-k=trg]'}
+  else if(q==='part'){
+    if(!t.partition){const pk=t.cols.filter(c=>c.pk);const pc=pk[pk.length-1]||t.cols[0];if(pc)t.partition={by:'RANGE',cols:[pc.id]}}
+    sec='[data-f=pby]';
+  }
+  renderAll();
+  const els=document.querySelectorAll('#editor '+sec),el=els[els.length-1],asd=$('aside');
+  if(el&&asd)asd.scrollTop=Math.max(0,el.offsetTop-90);
+}
+$('#bEnum').onclick=()=>openModal({title:'Novo enum',msg:'Nome do tipo (ex.: status_pedido). Os valores você edita em Modelo → Enums.',value:'novo_enum',ok:'Criar',
+  onOk:name=>{const n=String(name||'').trim().replace(/\s+/g,'_');if(!n)return;histBefore(null);S.enums.push({id:MADB.newId(S,'enum'),schema:'public',name:n,values:['valor1','valor2']});sel=MODEL;renderAll()}});
 
 /* ---------- barra do diagrama ---------- */
 $('#bLayout').onclick=()=>{histBefore(null);layoutSchemas(true);needFit=true;renderOut()};
