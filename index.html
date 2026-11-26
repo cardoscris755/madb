@@ -173,6 +173,7 @@ header{padding:8px 14px;gap:14px}
 .pchips{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
 .pchip{border:1px solid;border-radius:99px;padding:2px 9px;font-size:12px;color:var(--text)}
 .sm.on{border-color:var(--accent);color:var(--accent)}
+.tb .ct.enumt{fill:var(--accent);font-weight:600}
 .rcn{font:700 11px system-ui,sans-serif;paint-order:stroke;stroke:#0a0a0a;stroke-width:3px}
 .relhit{fill:none;stroke:transparent;stroke-width:14;cursor:pointer}
 .edge{pointer-events:none}
@@ -733,6 +734,7 @@ function renderDiagram(){
     o='<text x="30" y="50" fill="currentColor" opacity=".5" font-size="14">Adicione uma tabela ou importe um JSON para começar o diagrama.</text>';
     svg.innerHTML=worldG(o);applyView();return;
   }
+  const enumNames=new Set(S.enums.flatMap(e=>[e.name,(e.schema||'public')+'.'+e.name]));
   schemaGroups().forEach(grp=>{
     const x=Math.min(...grp.tables.map(t=>t.x)),y=Math.min(...grp.tables.map(t=>t.y))-12;
     o+=`<text class="schl" x="${x}" y="${y}">${esc(grp.name)} · ${grp.tables.length}</text>`;
@@ -765,7 +767,7 @@ function renderDiagram(){
       const tag=c.pk&&fk?'PK·FK':c.pk?'PK':fk?'FK':'';
       o+=`<text class="${c.pk?'tag-pk':'tag-fk'}" x="10" y="${y+15}">${tag}</text>
       <text class="cn" x="${tag?(tag.length>2?44:28):12}" y="${y+15}" ${c.pk?'font-weight="600"':''}>${esc(c.name)}${(c.nn||c.pk)?'':'?'}</text>
-      <text class="ct" x="${W-10}" y="${y+15}" text-anchor="end">${esc(c.type.length>16?c.type.slice(0,15)+'…':c.type)}</text>`;
+      <text class="ct${enumNames.has(c.type)?' enumt':''}" x="${W-10}" y="${y+15}" text-anchor="end">${enumNames.has(c.type)?'◆ ':''}${esc(c.type.length>16?c.type.slice(0,15)+'…':c.type)}</text>`;
     });
     o+='</g>';
   });
