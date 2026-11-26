@@ -39,6 +39,8 @@ main.open aside{display:block}
 svg{display:block;margin:auto;flex:none}
 .out{height:300px;border-top:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
 .right.nocode .out{display:none}
+button:disabled{opacity:.4;cursor:default}
+button:disabled:hover{border-color:var(--line)}
 .tabs{display:flex;gap:2px;padding:6px 10px 0;border-bottom:1px solid var(--line);align-items:flex-end}
 .tab{padding:5px 12px;border:1px solid transparent;border-bottom:none;border-radius:6px 6px 0 0;cursor:pointer;color:var(--muted);background:none}
 .tab.on{background:var(--code-bg);color:var(--code-ink);border-color:var(--line)}
@@ -188,6 +190,8 @@ details.more .r{margin-top:6px}
     <div class="canvas-wrap">
       <div class="toolbar">
         <button class="sm primary" id="bAddT">+ Tabela</button>
+        <button class="sm" id="bUndo" title="Desfazer (Ctrl+Z)">↶ Desfazer</button>
+        <button class="sm" id="bRedo" title="Refazer (Ctrl+Y ou Ctrl+Shift+Z)">↷ Refazer</button>
         <button class="sm" id="bModel">⚙ Modelo</button>
         <button class="sm" id="bLayout">Organizar por schema</button>
         <button class="sm" id="bFit">Ajustar</button>
@@ -292,6 +296,64 @@ function parseIdxCols(t,text){
 }
 const fmtIdxCols=(t,cols)=>cols.map(e=>e.expr?`(${e.expr})`:(cOf(t,e.c)?cOf(t,e.c).name:'?')+(e.order?' '+e.order:'')+(e.nulls?' NULLS '+e.nulls:'')).join(', ');
 const dv=(key,fallback)=>key in drafts?drafts[key]:fallback;
+
+/* ---------- desfazer / refazer ---------- */
+const HIST={u:[],r:[]};let histKey=null,histT=0;
+function updateHistBtns(){
+  const a=$('#bUndo'),b=$('#bRedo');
+  if(a)a.disabled=!HIST.u.length;if(b)b.disabled=!HIST.r.length;
+}
+/* guarda o estado ANTES de uma mudança; digitação no mesmo campo vira uma só entrada */
+function histBefore(key){
+  const now=Date.now();
+  if(key!==null&&key===histKey&&now-histT<1500){histT=now;return}
+  histKey=key;histT=now;
+  const snap=JSON.stringify(S);
+  if(HIST.u.length&&HIST.u[HIST.u.length-1]===snap)return;
+  HIST.u.push(snap);if(HIST.u.length>100)HIST.u.shift();
+  HIST.r=[];updateHistBtns();
+}
+function clearHist(){HIST.u=[];HIST.r=[];histKey=null;updateHistBtns()}
+function applyHist(){
+  histKey=null;
+  if(sel!==null&&sel!==MODEL&&!tOf(sel))sel=null;
+  closePop();renderAll();updateHistBtns();
+}
+function undo(){
+  const cur0=JSON.stringify(S);
+  while(HIST.u.length&&HIST.u[HIST.u.length-1]===cur0)HIST.u.pop();
+  if(!HIST.u.length)return;
+  HIST.r.push(cur0);S=JSON.parse(HIST.u.pop());applyHist();
+}
+function redo(){
+  const cur0=JSON.stringify(S);
+  while(HIST.r.length&&HIST.r[HIST.r.length-1]===cur0)HIST.r.pop();
+  if(!HIST.r.length)return;
+  HIST.u.push(cur0);S=JSON.parse(HIST.r.pop());applyHist();
+}
+/* confirmação antes de qualquer exclusão */
+function confirmDel(what,fn){
+  openModal({title:'Confirmar exclusão',input:false,danger:true,ok:'Excluir',
+    msg:`Excluir ${what}? Você pode desfazer depois com Ctrl+Z.`,
+    onOk:()=>{histBefore(null);fn()}});
+}
+function delLabel(a,btn){
+  const t=tOf(sel);
+  if(a==='delT')return `a tabela "${t?t.name:''}" e tudo que está nela`;
+  if(a==='delC'){const c=t&&cOf(t,btn.closest('.col').dataset.cid);return `a coluna "${c?c.name:''}"`}
+  return ({delK:'esta restrição',delI:'este índice',delG:'este trigger',delP:'esta partição',delS:'este schema',delE:'este enum',delF:'esta função'})[a]||'este item';
+}
+document.addEventListener('keydown',e=>{
+  if(!$('#modal').hidden)return;
+  const tag=e.target.tagName||'';
+  if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||e.target.isContentEditable)return;
+  const k=e.key.toLowerCase(),mod=e.ctrlKey||e.metaKey;
+  if(mod&&!e.shiftKey&&k==='z'){e.preventDefault();undo()}
+  else if(mod&&(k==='y'||(e.shiftKey&&k==='z'))){e.preventDefault();redo()}
+});
+$('#bUndo').onclick=undo;
+$('#bRedo').onclick=redo;
+updateHistBtns();
 
 /* ---------- editor ---------- */
 function refOptions(t,c){
@@ -414,6 +476,7 @@ const emptyDel=(o,k)=>{if(o[k]&&!o[k].length)delete o[k]};
 
 /* edição por input (sem re-render, para não perder o foco) */
 $('#editor').addEventListener('input',e=>{
+  if(e.target.dataset.f)histBefore(e.target);
   const el=e.target,f=el.dataset.f,g=el.dataset.g;
   if(g==='naming')return;
   if(!f)return;
@@ -467,6 +530,7 @@ function modelInput(el,f){
 }
 /* edição por change (pode re-renderizar) */
 $('#editor').addEventListener('change',e=>{
+  histBefore(null);
   const el=e.target,f=el.dataset.f,g=el.dataset.g;
   if(g==='naming'){S.options=Object.assign({},S.options,{indexNaming:el.value});syncNaming();renderOut(true);return}
   if(!f)return;
@@ -525,9 +589,7 @@ $('#editor').addEventListener('change',e=>{
     renderAll();return}
   renderAll();
 });
-$('#editor').addEventListener('click',e=>{
-  const btn=e.target.closest('[data-a]');if(!btn)return;const a=btn.dataset.a;
-  const sub=btn.closest('.sub');
+function act(a,btn,sub){
   if(sel===MODEL){
     if(a==='addS')S.schemas.push({name:'novo_schema'});
     else if(a==='delS')S.schemas.splice(+sub.dataset.i,1);
@@ -550,8 +612,15 @@ $('#editor').addEventListener('click',e=>{
   else if(a==='addP'){(t.partitions=t.partitions||[]).push({id:MADB.newId(S,'partition',t),name:`${t.name}_p${t.partitions.length+1}`,bound:t.partition&&t.partition.by==='HASH'?'WITH (MODULUS 4, REMAINDER 0)':t.partition&&t.partition.by==='LIST'?"IN ('A')":"FROM ('2026-01-01') TO ('2026-02-01')"})}
   else if(a==='delP'){t.partitions=t.partitions.filter(x=>x.id!==sub.dataset.id);emptyDel(t,'partitions')}
   renderAll();
+}
+$('#editor').addEventListener('click',e=>{
+  const btn=e.target.closest('[data-a]');if(!btn)return;const a=btn.dataset.a;
+  const sub=btn.closest('.sub');
+  if(a.startsWith('del'))confirmDel(delLabel(a,btn),()=>act(a,btn,sub));
+  else{histBefore(null);act(a,btn,sub)}
 });
 $('#bAddT').onclick=()=>{
+  histBefore(null);
   const n=S.tables.length+1;
   const t=mkTable('tabela_'+n,40+(n%4)*260,40+Math.floor(n/4)*220);
   mkCol(t,'id','bigint',{pk:true,nn:true,identity:'ALWAYS'});
@@ -679,6 +748,7 @@ window.addEventListener('pointermove',e=>{
   const t=tOf(drag.id);const dx=(e.clientX-drag.sx)/zoom,dy=(e.clientY-drag.sy)/zoom;
   if(Math.abs(dx)+Math.abs(dy)>3)drag.moved=true;
   if(!drag.moved)return;
+  if(!drag.hist){histBefore(null);drag.hist=true}
   t.x=Math.round(drag.ox+dx);t.y=Math.round(drag.oy+dy);
   renderDiagram();
 });
@@ -698,7 +768,7 @@ $('#canvas').addEventListener('scroll',closePop);
 $('#svg').addEventListener('click',e=>{
   const a=e.target.closest('[data-a]');if(!a)return;
   const t=tOf(sel);if(!t)return;
-  if(a.dataset.a==='addCol'){const c=mkCol(t,'coluna_'+(t.cols.length+1),'text');renderAll();openPop(t,c)}
+  if(a.dataset.a==='addCol'){histBefore(null);const c=mkCol(t,'coluna_'+(t.cols.length+1),'text');renderAll();openPop(t,c)}
   else if(a.dataset.a==='pickCol'){const c=cOf(t,a.dataset.cid);if(c)openPop(t,c,a)}
 });
 
@@ -724,10 +794,11 @@ function openPop(t,c,anchor){
 }
 $('#pop').addEventListener('input',e=>{
   const f=e.target.dataset.pp,{c}=popCol();if(!c||!f)return;
-  if(f==='name'||f==='type'){c[f]=e.target.value;renderAll()}
+  if(f==='name'||f==='type'){histBefore(e.target);c[f]=e.target.value;renderAll()}
 });
 $('#pop').addEventListener('change',e=>{
   const f=e.target.dataset.pp,{t,c}=popCol();if(!c||!f)return;
+  histBefore(null);
   if(f==='pk'){c.pk=e.target.checked;if(c.pk)c.nn=true}
   else if(f==='nn'||f==='uq'){c[f]=e.target.checked}
   else return;
@@ -736,13 +807,13 @@ $('#pop').addEventListener('change',e=>{
 $('#pop').addEventListener('click',e=>{
   const f=e.target.dataset.pp,{t,c}=popCol();if(!c||!f)return;
   if(f==='close')closePop();
-  else if(f==='del'){t.cols=t.cols.filter(x=>x.id!==c.id);prune();closePop();renderAll()}
+  else if(f==='del'){confirmDel(`a coluna "${c.name}"`,()=>{t.cols=t.cols.filter(x=>x.id!==c.id);prune();closePop();renderAll()})}
 });
 document.addEventListener('pointerdown',e=>{if(!$('#pop').hidden&&!e.target.closest('#pop,[data-a]'))closePop()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closePop()});
 
 /* ---------- barra do diagrama ---------- */
-$('#bLayout').onclick=()=>{layoutSchemas(true);needFit=true;renderOut()};
+$('#bLayout').onclick=()=>{histBefore(null);layoutSchemas(true);needFit=true;renderOut()};
 $('#bFit').onclick=()=>{needFit=true;renderDiagram()};
 $('#bCode').onclick=()=>{
   const r=$('#right'),show=r.classList.toggle('nocode')===false;
@@ -849,7 +920,7 @@ $('#bCopy').onclick=async()=>{
 };
 $('#bClear').onclick=()=>{
   const b=$('#bClear'),L='Limpar esta arquitetura';
-  if(b.dataset.arm){S=MADB.emptyModel();sel=null;setOrigin('edição local');renderAll();b.textContent=L;delete b.dataset.arm}
+  if(b.dataset.arm){histBefore(null);S=MADB.emptyModel();sel=null;setOrigin('edição local');renderAll();b.textContent=L;delete b.dataset.arm}
   else{b.dataset.arm=1;b.textContent='Confirmar limpar?';setTimeout(()=>{b.textContent=L;delete b.dataset.arm},2500)}};
 
 /* ---------- importação de JSON (colar, arquivo, arrastar) ---------- */
@@ -868,6 +939,7 @@ function importText(text,origem,after){
   showImport(r,origem);
   if(r.errors.length||!r.model)return false;
   const go=mode=>{ // 'novo' | 'substituir'
+    clearHist();
     if(mode==='novo'){saveDB();const w=newWs(origem.replace(/\.json$/i,''),r.model);DB.active=w.id;S=w.model;loadLink();}
     else{S=r.model;cur().model=S}
     sel=null;needFit=true;
@@ -916,7 +988,7 @@ function renderWs(){
   $('#wsSel').innerHTML=DB.ws.map(w=>`<option value="${w.id}" ${w.id===DB.active?'selected':''}>${esc(w.name)} (${w.model.tables.length} tab.)</option>`).join('');
 }
 function switchTo(id){
-  saveDB();
+  saveDB();clearHist();
   DB.active=id;S=cur().model;sel=null;needFit=true;
   $('#canvas').scrollTo(0,0);
   loadLink();
@@ -1036,7 +1108,7 @@ async function pullFromFile(manual){
     if(r.errors.length||!r.model){showImport(r,file.name);w.fileStamp=file.lastModified;return}
     const incoming=r.model,same=MADB.stableStringify(stripXY(MADB.serialize(incoming)))===modelHash();
     if(same){markSynced(file.lastModified);renderStatus();if(manual)showImport(r,file.name+' (já estava igual)');return}
-    const apply=()=>{S=keepPositions(incoming);w.model=S;if(!S.tables.find(t=>t.id===sel)&&sel!==MODEL)sel=null;
+    const apply=()=>{clearHist();S=keepPositions(incoming);w.model=S;if(!S.tables.find(t=>t.id===sel)&&sel!==MODEL)sel=null;
       markSynced(file.lastModified,'recebido do arquivo '+file.name);showImport(r,file.name);renderAll()};
     if(!isDirty()&&w.syncHash!=null||!S.tables.length&&!S.enums.length&&!S.functions.length)apply();
     else openModal({title:'O arquivo mudou e você também alterou aqui',input:false,ok:'Continuar',
