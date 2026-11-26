@@ -176,6 +176,8 @@ header{padding:8px 14px;gap:14px}
 .tb .ct.enumt{fill:var(--accent);font-weight:600;cursor:help}
 .etip{position:fixed;z-index:110;width:280px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:0 12px 32px rgba(0,0,0,.45);pointer-events:none;font:13px system-ui,sans-serif;color:var(--text)}
 .etip[hidden]{display:none}
+.modal .vl{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);margin-bottom:10px}
+.modal textarea{width:100%;min-height:120px;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px}
 .etip .eh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line)}
 .etip .eh b{color:var(--accent);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .etip .eh span{font-size:11.5px;color:var(--muted)}
@@ -865,8 +867,7 @@ $('#pop').addEventListener('change',e=>{
 $('#pop').addEventListener('click',e=>{
   const f=e.target.dataset.pp,{t,c}=popCol();if(!c||!f)return;
   if(f==='close')closePop();
-  else if(f==='enum'){openModal({title:'Novo enum para esta coluna',msg:'Nome do tipo (ex.: status_pedido). A coluna passa a usar esse tipo.',value:'novo_enum',ok:'Criar',
-    onOk:name=>{const n=String(name||'').trim().replace(/\s+/g,'_');if(!n)return;histBefore(null);S.enums.push({id:MADB.newId(S,'enum'),schema:'public',name:n,values:['valor1','valor2']});c.type=n;renderAll()}})}
+  else if(f==='enum'){enumModal('Novo enum para esta coluna',(n,vals)=>{S.enums.push({id:MADB.newId(S,'enum'),schema:'public',name:n,values:vals});c.type=n;renderAll()})}
   else if(f==='del'){confirmDel(`a coluna "${c.name}"`,()=>{t.cols=t.cols.filter(x=>x.id!==c.id);prune();closePop();renderAll()})}
 });
 document.addEventListener('pointerdown',e=>{if(!$('#pop').hidden&&!e.target.closest('#pop,[data-a]'))closePop()});
@@ -919,6 +920,18 @@ $('#relp').addEventListener('click',e=>{
 document.addEventListener('pointerdown',e=>{if(!$('#relp').hidden&&!e.target.closest('#relp,[data-rel]'))closeRel()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeRel()});
 
+/* criar enum: nome e valores na mesma janela */
+function enumModal(title,onCreate,presetName){
+  openModal({title,msg:'Digite o nome do tipo e os valores que ele aceita.',value:presetName||'novo_enum',ok:'Criar enum',
+    extra:'<label class="vl">Valores (um por linha)<textarea id="mVals" rows="6" spellcheck="false" placeholder="ex.: aberto&#10;pago&#10;cancelado"></textarea></label>',
+    onOk:name=>{
+      const n=String(name||'').trim().replace(/\s+/g,'_');if(!n)return;
+      const raw=document.getElementById('mVals').value;
+            const vals=[...new Set(raw.split(/\r?\n/).map(x=>x.trim()).filter(Boolean))];
+      histBefore(null);onCreate(n,vals.length?vals:['valor1']);
+    }});
+  setTimeout(()=>{const t=document.getElementById('mVals');if(t)t.focus()},30);
+}
 /* ---------- ações rápidas: CHECK, FK composta, trigger, partição, enum ---------- */
 function quick(q,t){
   t.constraints=t.constraints||[];
@@ -934,8 +947,7 @@ function quick(q,t){
   const els=document.querySelectorAll('#editor '+sec),el=els[els.length-1],asd=$('aside');
   if(el&&asd)asd.scrollTop=Math.max(0,el.offsetTop-90);
 }
-$('#bEnum').onclick=()=>openModal({title:'Novo enum',msg:'Nome do tipo (ex.: status_pedido). Os valores você edita em Modelo → Enums.',value:'novo_enum',ok:'Criar',
-  onOk:name=>{const n=String(name||'').trim().replace(/\s+/g,'_');if(!n)return;histBefore(null);S.enums.push({id:MADB.newId(S,'enum'),schema:'public',name:n,values:['valor1','valor2']});sel=MODEL;renderAll()}});
+$('#bEnum').onclick=()=>enumModal('Novo enum',(n,vals)=>{S.enums.push({id:MADB.newId(S,'enum'),schema:'public',name:n,values:vals});sel=MODEL;renderAll()});
 
 /* ---------- tooltip do enum (passar o mouse sobre a coluna) ---------- */
 const etip=document.createElement('div');etip.id='etip';etip.className='etip';etip.hidden=true;document.body.appendChild(etip);
@@ -1353,7 +1365,7 @@ function openModal(o){
   (o.input===false?ok:inp).focus();if(o.input!==false)inp.select();
   const close=()=>{m.hidden=true;document.removeEventListener('keydown',key);if(o.onCancel)o.onCancel()};
   const done=()=>{const v=inp.value;const ex=document.querySelector('#mExtra input:checked');m.hidden=true;document.removeEventListener('keydown',key);o.onOk(v,ex?ex.value:null)};
-  const key=e=>{if(e.key==='Escape')close();else if(e.key==='Enter'&&document.activeElement.tagName!=='BUTTON'&&document.activeElement.tagName!=='INPUT')done();else if(e.key==='Enter'&&document.activeElement===inp&&o.input!==false)done()};
+  const key=e=>{if(e.key==='Escape')close();else if(e.key==='Enter'&&!['BUTTON','INPUT','TEXTAREA'].includes(document.activeElement.tagName))done();else if(e.key==='Enter'&&document.activeElement===inp&&o.input!==false)done()};
   document.addEventListener('keydown',key);
   ok.onclick=done;$('#mCancel').onclick=close;
   m.onclick=e=>{if(e.target===m)close()};
