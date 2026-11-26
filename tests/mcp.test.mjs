@@ -5,14 +5,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
 const sdk = path.join(root, 'mcp', 'node_modules', '@modelcontextprotocol', 'sdk', 'dist', 'esm', 'client');
-const { Client } = await import(path.join(sdk, 'index.js'));
-const { StdioClientTransport } = await import(path.join(sdk, 'stdio.js'));
+const { Client } = await import(pathToFileURL(path.join(sdk, 'index.js')).href);
+const { StdioClientTransport } = await import(pathToFileURL(path.join(sdk, 'stdio.js')).href);
 const M = createRequire(import.meta.url)(path.join(root, 'madb-core.js'));
 
 async function sessao(modeloInicial) {
