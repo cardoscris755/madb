@@ -38,6 +38,7 @@ main.open aside{display:block}
   radial-gradient(var(--line) 1px,transparent 1px) 0 0/20px 20px,var(--bg)}
 svg{display:block;margin:auto;flex:none}
 .out{height:300px;border-top:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
+.right.nocode .out{display:none}
 .tabs{display:flex;gap:2px;padding:6px 10px 0;border-bottom:1px solid var(--line);align-items:flex-end}
 .tab{padding:5px 12px;border:1px solid transparent;border-bottom:none;border-radius:6px 6px 0 0;cursor:pointer;color:var(--muted);background:none}
 .tab.on{background:var(--code-bg);color:var(--code-ink);border-color:var(--line)}
@@ -183,7 +184,7 @@ details.more .r{margin-top:6px}
     <div class="sec">Editor <span id="selName" style="text-transform:none;letter-spacing:0;color:var(--text);font-size:13px;margin-left:6px"></span><span class="spacer"></span><button class="sm ghost" id="bClose" title="Fechar editor">×</button></div>
     <div id="editor"></div>
   </aside>
-  <div class="right">
+  <div class="right nocode" id="right">
     <div class="canvas-wrap">
       <div class="toolbar">
         <button class="sm primary" id="bAddT">+ Tabela</button>
@@ -194,6 +195,7 @@ details.more .r{margin-top:6px}
         <span id="zl" style="min-width:42px;text-align:center;font-size:12px">100%</span>
         <button class="sm" id="bZp">+</button>
         <span style="flex:1"></span>
+        <button class="sm" id="bCode" title="Mostrar ou ocultar SQL, Mermaid e JSON">Código ▸</button>
         <label class="opt">Paleta <select id="palSel" aria-label="Paleta de cores"></select></label>
         <span class="hint">Clique numa tabela para editar · ✎ ao lado de uma coluna</span>
       </div>
@@ -730,6 +732,12 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closePop()});
 /* ---------- barra do diagrama ---------- */
 $('#bLayout').onclick=()=>{layoutSchemas(true);needFit=true;renderOut()};
 $('#bFit').onclick=()=>{needFit=true;renderDiagram()};
+$('#bCode').onclick=()=>{
+  const r=$('#right'),show=r.classList.toggle('nocode')===false;
+  $('#bCode').textContent=show?'Código ▾':'Código ▸';
+  if(show)renderOut(true);
+  needFit=true;renderDiagram();
+};
 $('#bZp').onclick=()=>{zoom=Math.min(2,+(zoom+.1).toFixed(1));renderDiagram()};
 $('#bZm').onclick=()=>{zoom=Math.max(.3,+(zoom-.1).toFixed(1));renderDiagram()};
 $('#bModel').onclick=()=>{sel=sel===MODEL?null:MODEL;closePop();renderAll()};
