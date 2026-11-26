@@ -163,6 +163,13 @@ header{padding:8px 14px;gap:14px}
 .userp .ul input,.userp .ul select{font-size:14px;color:var(--text);padding:6px 8px}
 .userp .un{font-size:11.5px;color:var(--muted);margin:0}
 .hint{display:none}
+.relhit{fill:none;stroke:transparent;stroke-width:14;cursor:pointer}
+.edge{pointer-events:none}
+.relhit:hover+.edge{stroke-width:2.6;opacity:1}
+#relp{width:300px}
+#relp .rl1,#relp .rarr{font-size:12.5px;margin-bottom:4px}
+#relp code{font:12px ui-monospace,Menlo,Consolas,monospace;background:var(--panel2);padding:1px 5px;border-radius:4px}
+#relp .pr2 select{font-size:12px}
 </style>
 </head>
 <body>
@@ -206,6 +213,7 @@ header{padding:8px 14px;gap:14px}
 </div>
 <div class="dropov" id="dropov" hidden>Solte o arquivo .json para importar</div>
 <div class="pop" id="pop" hidden></div>
+<div class="pop" id="relp" hidden></div>
 <main>
   <aside>
     <div class="sec">Editor <span id="selName" style="text-transform:none;letter-spacing:0;color:var(--text);font-size:13px;margin-left:6px"></span><span class="spacer"></span><button class="sm ghost" id="bClose" title="Fechar editor">×</button></div>
@@ -672,7 +680,7 @@ function layoutSchemas(force){
   });
 }
 const rowY=(t,c)=>t.y+HH+t.cols.indexOf(c)*RH+RH/2;
-function edge(s,c,t,rc,many){
+function edge(s,c,t,rc,many,key){
   const y1=rowY(s,c),y2=rowY(t,rc);
   const right=(s.x+W/2)<=(t.x+W/2);
   let x1,x2,d1,d2;
@@ -680,7 +688,8 @@ function edge(s,c,t,rc,many){
   else if(right){x1=s.x+W;x2=t.x;d1=1;d2=-1}
   else{x1=s.x;x2=t.x+W;d1=-1;d2=1}
   const k=s===t?60:Math.max(40,Math.abs(x2-x1)/2);
-  return `<path class="edge" d="M${x1},${y1} C${x1+d1*k},${y1} ${x2+d2*k},${y2} ${x2},${y2}"/>
+  const d=`M${x1},${y1} C${x1+d1*k},${y1} ${x2+d2*k},${y2} ${x2},${y2}`;
+  return `<path class="relhit" data-rel="${key}" d="${d}"/><path class="edge" d="${d}"/>
   <text class="card" x="${x1+d1*12-(d1<0?4:0)}" y="${y1-5}" text-anchor="${d1>0?'start':'end'}">${many?'N':'1'}</text>
   <text class="card" x="${x2+d2*12-(d2<0?4:0)}" y="${y2-5}" text-anchor="${d2>0?'start':'end'}">1</text>`;
 }
@@ -717,12 +726,12 @@ function renderDiagram(){
     s.cols.forEach(c=>{
       if(!c.ref)return;
       const t=tOf(c.ref.t),rc=cOf(t,c.ref.c);if(!t||!rc)return;
-      o+=edge(s,c,t,rc,!(c.uq||c.pk&&s.cols.filter(z=>z.pk).length===1));
+      o+=edge(s,c,t,rc,!(c.uq||c.pk&&s.cols.filter(z=>z.pk).length===1),'col|'+s.id+'|'+c.id);
     });
     (s.constraints||[]).forEach(k=>{
       if(k.kind!=='fk')return;
       const t=tOf(k.ref.t),c=cOf(s,k.cols[0]),rc=cOf(t,k.ref.cols[0]);if(!t||!c||!rc)return;
-      o+=edge(s,c,t,rc,true);
+      o+=edge(s,c,t,rc,true,'con|'+s.id+'|'+k.id);
     });
   });
   S.tables.forEach(t=>{
@@ -779,12 +788,13 @@ window.addEventListener('pointerup',()=>{
 });
 /* clicar no fundo do canvas fecha o editor */
 $('#canvas').addEventListener('pointerdown',e=>{
-  if(e.button!==0||e.target.closest('.tb,[data-a],#pop'))return;
+  if(e.button!==0||e.target.closest('.tb,[data-a],[data-rel],#pop,#relp'))return;
   if(sel===null)return;
   sel=null;closePop();renderEditor();renderDiagram();
 });
 $('#canvas').addEventListener('scroll',closePop);
 $('#svg').addEventListener('click',e=>{
+  const rl=e.target.closest('[data-rel]');if(rl){openRel(rl.dataset.rel,e.clientX,e.clientY);return}
   const a=e.target.closest('[data-a]');if(!a)return;
   const t=tOf(sel);if(!t)return;
   if(a.dataset.a==='addCol'){histBefore(null);const c=mkCol(t,'coluna_'+(t.cols.length+1),'text');renderAll();openPop(t,c)}
@@ -831,6 +841,53 @@ $('#pop').addEventListener('click',e=>{
 document.addEventListener('pointerdown',e=>{if(!$('#pop').hidden&&!e.target.closest('#pop,[data-a]'))closePop()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closePop()});
 
+/* ---------- relação (clique na linha entre tabelas) ---------- */
+let relCtx=null;
+function relInfo(key){
+  const [kind,tid,id]=key.split('|');
+  const s=tOf(tid);if(!s)return null;
+  if(kind==='col'){
+    const c=cOf(s,id);if(!c||!c.ref)return null;
+    const rt=tOf(c.ref.t),rc=rt&&cOf(rt,c.ref.c);
+    const one=c.uq||(c.pk&&s.cols.filter(z=>z.pk).length===1);
+    return {kind,s,obj:c,from:`${s.name}.${c.name}`,to:rt&&rc?`${rt.name}.${rc.name}`:'(destino removido)',del:c.del||'NO ACTION',card:one?'1:1':'N:1'};
+  }
+  const k=(s.constraints||[]).find(x=>x.id===id);if(!k||k.kind!=='fk')return null;
+  const rt=tOf(k.ref.t);
+  return {kind,s,obj:k,from:`${s.name} (${colNames(s,k.cols)})`,to:rt?`${rt.name} (${colNames(rt,k.ref.cols)})`:'(destino removido)',del:k.del||'NO ACTION',card:'N:1'};
+}
+function closeRel(){relCtx=null;const p=$('#relp');p.hidden=true;p.innerHTML=''}
+function openRel(key,x,y){
+  const i=relInfo(key);if(!i)return;
+  relCtx=key;
+  const p=$('#relp');
+  p.innerHTML=`<div class="uh">Relação</div>
+    <div class="rl1"><code>${esc(i.from)}</code></div>
+    <div class="rarr">→ <code>${esc(i.to)}</code></div>
+    <div class="pr2"><span class="muted">Cardinalidade ${i.card}</span></div>
+    <div class="pr2"><label>Ao apagar o pai&nbsp;<select data-rp="del">${optList(DEL,i.del)}</select></label></div>
+    <div class="pr2"><span class="spacer"></span><button class="sm danger" data-rp="rm">Remover relação</button><button class="sm" data-rp="close">Fechar</button></div>`;
+  p.hidden=false;
+  p.style.left=Math.max(8,Math.min(x+12,innerWidth-320))+'px';
+  p.style.top=Math.max(8,Math.min(y-10,innerHeight-200))+'px';
+}
+$('#relp').addEventListener('change',e=>{
+  const i=relCtx&&relInfo(relCtx);if(!i||e.target.dataset.rp!=='del')return;
+  histBefore(null);i.obj.del=e.target.value;renderAll();
+});
+$('#relp').addEventListener('click',e=>{
+  const f=e.target.dataset.rp;if(!f)return;
+  if(f==='close'){closeRel();return}
+  const i=relCtx&&relInfo(relCtx);if(!i)return;
+  if(f==='rm')confirmDel(`a relação ${i.from} → ${i.to}`,()=>{
+    if(i.kind==='col'){i.obj.ref=null;i.obj.del='NO ACTION'}
+    else{i.s.constraints=i.s.constraints.filter(x=>x.id!==i.obj.id);if(!i.s.constraints.length)delete i.s.constraints}
+    closeRel();renderAll();
+  });
+});
+document.addEventListener('pointerdown',e=>{if(!$('#relp').hidden&&!e.target.closest('#relp,[data-rel]'))closeRel()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeRel()});
+
 /* ---------- barra do diagrama ---------- */
 $('#bLayout').onclick=()=>{histBefore(null);layoutSchemas(true);needFit=true;renderOut()};
 $('#bFit').onclick=()=>{needFit=true;renderDiagram()};
@@ -875,7 +932,7 @@ let pan=null;
 const cvs=$('#canvas');
 cvs.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault()});
 cvs.addEventListener('pointerdown',e=>{
-  const onBg=e.button===0&&!e.target.closest('.tb,[data-a],#pop');
+  const onBg=e.button===0&&!e.target.closest('.tb,[data-a],[data-rel],#pop,#relp');
   if(e.button!==1&&!onBg)return;
   e.preventDefault();
   pan={x:e.clientX,y:e.clientY};
