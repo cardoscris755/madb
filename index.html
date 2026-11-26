@@ -597,20 +597,32 @@ function fitZoom(){
 }
 function renderDiagram(){
   layoutSchemas(false);
-  let mx=0,my=0;
-  S.tables.forEach(t=>{mx=Math.max(mx,t.x+W+(t.id===sel?40:0));my=Math.max(my,t.y+tH(t))});
-  dim={w:Math.max(mx+30,320),h:Math.max(my+70,240)};
-  if(needFit&&S.tables.length){fitZoom();needFit=false}
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  S.tables.forEach(t=>{
+    const extra=t.id===sel;
+    x0=Math.min(x0,t.x);y0=Math.min(y0,t.y);
+    x1=Math.max(x1,t.x+W+(extra?40:0));y1=Math.max(y1,t.y+tH(t)+(extra?34:0));
+  });
+  if(!S.tables.length){x0=0;y0=0;x1=320;y1=240}
+  const cw=x1-x0,ch=y1-y0;
+  dim={w:cw+60,h:ch+60};
+  const wasFit=needFit&&S.tables.length>0;
+  if(wasFit){fitZoom();needFit=false}
+  /* área infinita: uma tela de folga em volta do conteúdo, para levar tabelas a qualquer canto */
+  const cv=$('#canvas');
+  const padX=Math.max(120,(cv.clientWidth||800)/zoom),padY=Math.max(120,(cv.clientHeight||600)/zoom);
+  const ox=x0-padX,oy=y0-padY-30,vw=cw+2*padX,vh=ch+30+2*padY+40;
   const svg=$('#svg');
-  svg.setAttribute('viewBox',`0 0 ${dim.w} ${dim.h}`);svg.setAttribute('width',dim.w*zoom);svg.setAttribute('height',dim.h*zoom);
+  svg.setAttribute('viewBox',`${ox} ${oy} ${vw} ${vh}`);svg.setAttribute('width',vw*zoom);svg.setAttribute('height',vh*zoom);
+  if(wasFit){cv.scrollLeft=(vw*zoom-cv.clientWidth)/2;cv.scrollTop=(vh*zoom-cv.clientHeight)/2}
   let o='';
   if(!S.tables.length){
     o='<text x="30" y="50" fill="currentColor" opacity=".5" font-size="14">Adicione uma tabela ou importe um JSON para começar o diagrama.</text>';
     svg.innerHTML=o;$('#zl').textContent=Math.round(zoom*100)+'%';return;
   }
   schemaGroups().forEach(grp=>{
-    const x=Math.min(...grp.tables.map(t=>t.x));
-    o+=`<text class="schl" x="${x}" y="22">${esc(grp.name)} · ${grp.tables.length}</text>`;
+    const x=Math.min(...grp.tables.map(t=>t.x)),y=Math.min(...grp.tables.map(t=>t.y))-12;
+    o+=`<text class="schl" x="${x}" y="${y}">${esc(grp.name)} · ${grp.tables.length}</text>`;
   });
   S.tables.forEach(s=>{
     s.cols.forEach(c=>{
@@ -667,7 +679,7 @@ window.addEventListener('pointermove',e=>{
   const t=tOf(drag.id);const dx=(e.clientX-drag.sx)/zoom,dy=(e.clientY-drag.sy)/zoom;
   if(Math.abs(dx)+Math.abs(dy)>3)drag.moved=true;
   if(!drag.moved)return;
-  t.x=Math.max(0,Math.round(drag.ox+dx));t.y=Math.max(0,Math.round(drag.oy+dy));
+  t.x=Math.round(drag.ox+dx);t.y=Math.round(drag.oy+dy);
   renderDiagram();
 });
 window.addEventListener('pointerup',()=>{
@@ -763,7 +775,8 @@ let pan=null;
 const cvs=$('#canvas');
 cvs.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault()});
 cvs.addEventListener('pointerdown',e=>{
-  if(e.button!==1)return;
+  const onBg=e.button===0&&!e.target.closest('.tb,[data-a],#pop');
+  if(e.button!==1&&!onBg)return;
   e.preventDefault();
   pan={x:e.clientX,y:e.clientY,l:cvs.scrollLeft,t:cvs.scrollTop};
   cvs.style.cursor='grabbing';
