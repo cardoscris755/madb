@@ -6,14 +6,9 @@
 <title>MADB – Modelagem PostgreSQL com diagramas</title>
 <style>
 :root{
-  --bg:#f6f7f9;--panel:#fff;--panel2:#f0f2f5;--line:#d9dde3;--text:#1c2330;--muted:#667085;
-  --accent:#2f5d9e;--accent-ink:#fff;--accent-soft:#e6eefb;--warn:#a15c00;--warn-bg:#fff4e0;--danger:#b42318;
-  --pk:#b7791f;--fk:#2f7d5b;--code-bg:#0f1722;--code-ink:#d6e2f0;
-}
-@media (prefers-color-scheme:dark){
-  :root{--bg:#10151c;--panel:#18202b;--panel2:#1f2936;--line:#2c394a;--text:#e6ebf2;--muted:#93a1b5;
-  --accent:#6ea0ec;--accent-ink:#0c1522;--accent-soft:#1d2d47;--warn:#f0b35a;--warn-bg:#33270f;--danger:#f97066;
-  --pk:#e3b04b;--fk:#5fc79a;--code-bg:#0b1119;--code-ink:#d6e2f0}
+  --bg:#0a0a0a;--panel:#141414;--panel2:#1c1c1c;--line:#2e2e2e;--text:#f2f2f2;--muted:#9a9a9a;
+  --accent:#facc15;--accent-ink:#0a0a0a;--accent-soft:#2a2505;--warn:#facc15;--warn-bg:#2a2505;--danger:#ff6b6b;
+  --pk:#facc15;--fk:#a3a3a3;--code-bg:#050505;--code-ink:#e5e5e5;color-scheme:dark;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -31,15 +26,17 @@ button.danger{color:var(--danger)}
 button.sm{padding:2px 8px;font-size:12px}
 input[type=text],select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:5px;padding:4px 7px;min-width:0}
 input[type=text]:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
-main{flex:1;min-height:0;display:grid;grid-template-columns:370px 1fr}
-aside{background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:12px;min-height:0}
+main{flex:1;min-height:0;display:grid;grid-template-columns:1fr}
+main.open{grid-template-columns:370px 1fr}
+aside{display:none;background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:12px;min-height:0}
+main.open aside{display:block}
 .right{display:flex;flex-direction:column;min-width:0;min-height:0}
 .canvas-wrap{flex:1;min-height:200px;display:flex;flex-direction:column;min-height:0}
 .toolbar{display:flex;gap:6px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);background:var(--panel)}
 .toolbar .hint{color:var(--muted);font-size:12px}
-.canvas{flex:1;overflow:auto;background:
+.canvas{flex:1;overflow:auto;display:flex;background:
   radial-gradient(var(--line) 1px,transparent 1px) 0 0/20px 20px,var(--bg)}
-svg{display:block}
+svg{display:block;margin:auto;flex:none}
 .out{height:300px;border-top:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
 .tabs{display:flex;gap:2px;padding:6px 10px 0;border-bottom:1px solid var(--line);align-items:flex-end}
 .tab{padding:5px 12px;border:1px solid transparent;border-bottom:none;border-radius:6px 6px 0 0;cursor:pointer;color:var(--muted);background:none}
@@ -100,6 +97,7 @@ textarea.code{flex:1;width:100%;border:none;border-radius:0;background:var(--cod
 @media (max-width:900px){
   .ws{border-left:none;padding-left:0;margin-left:0}
   main{grid-template-columns:1fr;grid-template-rows:auto 1fr;overflow:auto}
+  main.open{grid-template-columns:1fr}
   aside{border-right:none;border-bottom:1px solid var(--line);max-height:46vh}
   .out{height:260px}
 }
@@ -125,9 +123,24 @@ details.more .r{margin-top:6px}
 .imp .er{color:var(--danger)}.imp .wr{color:var(--warn)}.imp .ok{color:var(--fk)}
 .imp code{font:11.5px ui-monospace,Menlo,Consolas,monospace;background:var(--panel2);padding:0 4px;border-radius:3px}
 .imp .x{float:right}
-.dropov{position:fixed;inset:0;z-index:60;background:rgba(47,93,158,.82);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;border:4px dashed #fff;margin:10px;border-radius:14px;pointer-events:none}
+.dropov{position:fixed;inset:0;z-index:60;background:color-mix(in srgb,var(--accent) 85%,transparent);color:var(--accent-ink);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;border:4px dashed #fff;margin:10px;border-radius:14px;pointer-events:none}
 .dropov[hidden]{display:none}
 .modal{width:min(480px,100%)}
+.schl{fill:var(--muted);font:700 11px system-ui,sans-serif;letter-spacing:.6px;text-transform:uppercase}
+.fab{cursor:pointer}
+.fab circle{fill:var(--accent);stroke:var(--bg);stroke-width:2}
+.fab text{fill:var(--accent-ink);font:700 11px system-ui,sans-serif;pointer-events:none}
+.fab.pill rect{fill:var(--panel);stroke:var(--accent);stroke-width:1.2}
+.fab.pill text{fill:var(--accent);font:600 11px system-ui,sans-serif}
+.fab:hover circle,.fab:hover rect{filter:brightness(1.2)}
+.pop{position:fixed;z-index:70;width:300px;background:var(--panel);border:1px solid var(--accent);border-radius:8px;padding:10px;box-shadow:0 10px 30px rgba(0,0,0,.45)}
+.pop[hidden]{display:none}
+.pop .pr1{display:flex;gap:6px;margin-bottom:6px}
+.pop .pr1 input{flex:1;min-width:0}
+.pop .pr2{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;font-size:12px}
+.pop .pr2 label{display:flex;gap:3px;align-items:center;cursor:pointer}
+.pop .pr2 .spacer{flex:1}
+.pop .muted{color:var(--muted);font:11px ui-monospace,Menlo,Consolas,monospace}
 </style>
 </head>
 <body>
@@ -164,20 +177,25 @@ details.more .r{margin-top:6px}
   <input type="file" id="fileIn" accept=".json,application/json" hidden>
 </div>
 <div class="dropov" id="dropov" hidden>Solte o arquivo .json para importar</div>
+<div class="pop" id="pop" hidden></div>
 <main>
   <aside>
-    <div class="sec">Tabelas <span class="spacer"></span><button class="sm primary" id="bAddT">+ Nova tabela</button></div>
-    <div class="chips" id="chips"></div>
+    <div class="sec">Editor <span id="selName" style="text-transform:none;letter-spacing:0;color:var(--text);font-size:13px;margin-left:6px"></span><span class="spacer"></span><button class="sm ghost" id="bClose" title="Fechar editor">×</button></div>
     <div id="editor"></div>
   </aside>
   <div class="right">
     <div class="canvas-wrap">
       <div class="toolbar">
-        <button class="sm" id="bLayout">Auto-organizar</button>
+        <button class="sm primary" id="bAddT">+ Tabela</button>
+        <button class="sm" id="bModel">⚙ Modelo</button>
+        <button class="sm" id="bLayout">Organizar por schema</button>
+        <button class="sm" id="bFit">Ajustar</button>
         <button class="sm" id="bZm">−</button>
         <span id="zl" style="min-width:42px;text-align:center;font-size:12px">100%</span>
         <button class="sm" id="bZp">+</button>
-        <span class="hint">Arraste as tabelas · clique para editar</span>
+        <span style="flex:1"></span>
+        <label class="opt">Paleta <select id="palSel" aria-label="Paleta de cores"></select></label>
+        <span class="hint">Clique numa tabela para editar · ✎ ao lado de uma coluna</span>
       </div>
       <div class="canvas" id="canvas"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
     </div>
@@ -214,7 +232,8 @@ details.more .r{margin-top:6px}
 </datalist>
 <script>
 'use strict';
-const W=230,HH=34,RH=22;
+const W=230,HH=34,RH=22,HEAD=44,COLGAP=70,TGAP=40;
+let needFit=true,dim={w:320,h:240};
 const DEL=MADB.DEL_ACTIONS;
 let S=MADB.emptyModel(),sel=null,zoom=1,tab='sql';
 let idN=0;const nid=()=>'w'+Date.now().toString(36)+(++idN)+Math.random().toString(36).slice(2,5);
@@ -273,10 +292,6 @@ const fmtIdxCols=(t,cols)=>cols.map(e=>e.expr?`(${e.expr})`:(cOf(t,e.c)?cOf(t,e.
 const dv=(key,fallback)=>key in drafts?drafts[key]:fallback;
 
 /* ---------- editor ---------- */
-function renderChips(){
-  $('#chips').innerHTML=`<span class="chip mod ${sel===MODEL?'on':''}" data-id="${MODEL}" title="Schemas, enums, funções e opções do modelo">⚙ Modelo</span>`+
-    S.tables.map(t=>`<span class="chip ${t.id===sel?'on':''}" data-id="${t.id}">${esc(t.name||'(sem nome)')}</span>`).join('');
-}
 function refOptions(t,c){
   let o=`<option value="">— sem chave estrangeira —</option>`;
   S.tables.forEach(x=>{ if(x.id===t.id&&false)return; x.cols.forEach(y=>{
@@ -365,11 +380,15 @@ function modelHTML(){
     <div class="r"><input type="text" data-f="fcomment" value="${esc(f.comment||'')}" placeholder="comentário"></div></div>`).join('')||'<div class="empty" style="padding:4px">Nenhuma função (usadas por triggers).</div>'}`;
 }
 function renderEditor(){
-  renderChips();updateDatalists();
+  updateDatalists();
   const ed=$('#editor');
-  if(sel===MODEL){ed.innerHTML=modelHTML();return}
+  if(sel!==null&&sel!==MODEL&&!tOf(sel)){sel=null;closePop()}
+  const open=sel!==null;
+  $('main').classList.toggle('open',open);
+  if(!open){ed.innerHTML='';$('#selName').textContent='';return}
+  if(sel===MODEL){$('#selName').textContent='Modelo';ed.innerHTML=modelHTML();return}
   const t=tOf(sel);
-  if(!t){ed.innerHTML='<div class="empty">Crie ou selecione uma tabela para editar.</div>';return}
+  $('#selName').textContent=t.name;
   ed.innerHTML=`
   <div class="sec">Tabela</div>
   <div class="row"><label>Nome</label><input type="text" data-f="tname" value="${esc(t.name)}"></div>
@@ -399,7 +418,7 @@ $('#editor').addEventListener('input',e=>{
   if(sel===MODEL)return modelInput(el,f);
   const t=tOf(sel);if(!t)return;
   const sub=el.closest('.sub'),col=el.closest('.col');
-  if(f==='tname'){t.name=el.value;renderChips();renderOut();return}
+  if(f==='tname'){t.name=el.value;$('#selName').textContent=t.name;renderOut();return}
   if(f==='tschema'){t.schema=el.value.trim()||'public';renderOut();return}
   if(f==='tcomment'){if(el.value)t.comment=el.value;else delete t.comment;renderOut(true);return}
   if(col){
@@ -519,7 +538,7 @@ $('#editor').addEventListener('click',e=>{
   const t=tOf(sel);if(!t)return;
   if(a==='addC')mkCol(t,'coluna_'+(t.cols.length+1),'text');
   else if(a==='delC'){const id=btn.closest('.col').dataset.cid;t.cols=t.cols.filter(c=>c.id!==id);prune()}
-  else if(a==='delT'){S.tables=S.tables.filter(x=>x.id!==t.id);prune();sel=S.tables[0]?S.tables[0].id:null}
+  else if(a==='delT'){S.tables=S.tables.filter(x=>x.id!==t.id);prune();sel=null}
   else if(a==='addK'){(t.constraints=t.constraints||[]).push({id:MADB.newId(S,'constraint',t),name:'',kind:'check',expr:''})}
   else if(a==='delK'){t.constraints=t.constraints.filter(x=>x.id!==sub.dataset.id);emptyDel(t,'constraints')}
   else if(a==='addI'){const pk=t.cols[0];(t.indexes=t.indexes||[]).push({id:MADB.newId(S,'index',t),name:`idx_${t.name}_${(pk&&pk.name)||'col'}`,cols:pk?[{c:pk.id}]:[]})}
@@ -530,7 +549,6 @@ $('#editor').addEventListener('click',e=>{
   else if(a==='delP'){t.partitions=t.partitions.filter(x=>x.id!==sub.dataset.id);emptyDel(t,'partitions')}
   renderAll();
 });
-$('#chips').addEventListener('click',e=>{const id=e.target.dataset.id;if(id){sel=id;renderAll()}});
 $('#bAddT').onclick=()=>{
   const n=S.tables.length+1;
   const t=mkTable('tabela_'+n,40+(n%4)*260,40+Math.floor(n/4)*220);
@@ -540,7 +558,24 @@ $('#bAddT').onclick=()=>{
 
 /* ---------- diagrama ---------- */
 const tH=MADB.tableHeight;
-function rowY(t,c){return t.y+HH+t.cols.indexOf(c)*RH+RH/2}
+const schemaOf=t=>t.schema||'public';
+function schemaGroups(){
+  const g={};S.tables.forEach(t=>{(g[schemaOf(t)]=g[schemaOf(t)]||[]).push(t)});
+  const names=Object.keys(g).sort((a,b)=>a==='public'?-1:b==='public'?1:a.localeCompare(b));
+  return names.map(n=>({name:n,tables:g[n]}));
+}
+/* uma coluna por schema, tabelas empilhadas. force=true reorganiza tudo; senão só posiciona as novas */
+function layoutSchemas(force){
+  schemaGroups().forEach((grp,i)=>{
+    const missing=t=>force||t.x==null||t.y==null;
+    const placed=grp.tables.find(t=>!missing(t));
+    const x=placed?placed.x:24+i*(W+COLGAP);
+    let bottom=HEAD;
+    grp.tables.forEach(t=>{if(!missing(t))bottom=Math.max(bottom,t.y+tH(t)+TGAP)});
+    grp.tables.forEach(t=>{if(missing(t)){t.x=x;t.y=bottom;bottom+=tH(t)+TGAP}});
+  });
+}
+const rowY=(t,c)=>t.y+HH+t.cols.indexOf(c)*RH+RH/2;
 function edge(s,c,t,rc,many){
   const y1=rowY(s,c),y2=rowY(t,rc);
   const right=(s.x+W/2)<=(t.x+W/2);
@@ -553,14 +588,28 @@ function edge(s,c,t,rc,many){
   <text class="card" x="${x1+d1*12-(d1<0?4:0)}" y="${y1-5}" text-anchor="${d1>0?'start':'end'}">${many?'N':'1'}</text>
   <text class="card" x="${x2+d2*12-(d2<0?4:0)}" y="${y2-5}" text-anchor="${d2>0?'start':'end'}">1</text>`;
 }
+function fitZoom(){
+  const c=$('#canvas');const aw=c.clientWidth-32,ah=c.clientHeight-32;
+  if(aw<=0||ah<=0)return;
+  zoom=+Math.max(.3,Math.min(1.2,aw/dim.w,ah/dim.h)).toFixed(2);
+}
 function renderDiagram(){
-  MADB.autoLayout(S,false);
+  layoutSchemas(false);
   let mx=0,my=0;
-  S.tables.forEach(t=>{mx=Math.max(mx,t.x+W);my=Math.max(my,t.y+tH(t))});
-  const w=Math.max(mx+80,600),h=Math.max(my+80,360);
+  S.tables.forEach(t=>{mx=Math.max(mx,t.x+W+(t.id===sel?40:0));my=Math.max(my,t.y+tH(t))});
+  dim={w:Math.max(mx+30,320),h:Math.max(my+70,240)};
+  if(needFit&&S.tables.length){fitZoom();needFit=false}
   const svg=$('#svg');
-  svg.setAttribute('viewBox',`0 0 ${w} ${h}`);svg.setAttribute('width',w*zoom);svg.setAttribute('height',h*zoom);
+  svg.setAttribute('viewBox',`0 0 ${dim.w} ${dim.h}`);svg.setAttribute('width',dim.w*zoom);svg.setAttribute('height',dim.h*zoom);
   let o='';
+  if(!S.tables.length){
+    o='<text x="30" y="50" fill="currentColor" opacity=".5" font-size="14">Adicione uma tabela ou importe um JSON para começar o diagrama.</text>';
+    svg.innerHTML=o;$('#zl').textContent=Math.round(zoom*100)+'%';return;
+  }
+  schemaGroups().forEach(grp=>{
+    const x=Math.min(...grp.tables.map(t=>t.x));
+    o+=`<text class="schl" x="${x}" y="22">${esc(grp.name)} · ${grp.tables.length}</text>`;
+  });
   S.tables.forEach(s=>{
     s.cols.forEach(c=>{
       if(!c.ref)return;
@@ -574,7 +623,7 @@ function renderDiagram(){
     });
   });
   S.tables.forEach(t=>{
-    const h=tH(t),sub=[t.schema&&t.schema!=='public'?t.schema:'',t.partition?'particionada':''].filter(Boolean).join(' · ');
+    const h=tH(t),sub=t.partition?'particionada':'';
     const compFk=new Set();(t.constraints||[]).forEach(k=>{if(k.kind==='fk')k.cols.forEach(i=>compFk.add(i))});
     o+=`<g class="tb ${t.id===sel?'sel':''}" data-id="${t.id}" transform="translate(${t.x},${t.y})">
       <rect class="body" width="${W}" height="${h}" rx="7"/>
@@ -592,12 +641,20 @@ function renderDiagram(){
     });
     o+='</g>';
   });
-  if(!S.tables.length)o='<text x="30" y="50" fill="currentColor" opacity=".5" font-size="14">Adicione uma tabela ou importe um JSON para começar o diagrama.</text>';
+  /* botões flutuantes da tabela selecionada (fora do grupo, para não arrastar a tabela) */
+  const st=tOf(sel);
+  if(st){
+    st.cols.forEach((c,i)=>{
+      o+=`<g class="fab" data-a="pickCol" data-cid="${c.id}" transform="translate(${st.x+W+8},${st.y+HH+i*RH+3})"><title>Editar coluna</title><circle cx="9" cy="9" r="9"/><text x="9" y="13" text-anchor="middle">✎</text></g>`;
+    });
+    o+=`<g class="fab pill" data-a="addCol" transform="translate(${st.x+W/2-46},${st.y+tH(st)+8})"><rect width="92" height="22" rx="11"/><text x="46" y="15" text-anchor="middle">+ coluna</text></g>`;
+  }
   svg.innerHTML=o;
   $('#zl').textContent=Math.round(zoom*100)+'%';
 }
 let drag=null;
 $('#svg').addEventListener('pointerdown',e=>{
+  if(e.target.closest('[data-a]'))return;
   const g=e.target.closest('.tb');if(!g)return;
   const t=tOf(g.dataset.id);if(!t)return;
   drag={id:t.id,sx:e.clientX,sy:e.clientY,ox:t.x,oy:t.y,moved:false};
@@ -614,12 +671,88 @@ window.addEventListener('pointermove',e=>{
 window.addEventListener('pointerup',()=>{
   if(!drag)return;
   const id=drag.id,moved=drag.moved;drag=null;
-  if(sel!==id){sel=id;renderEditor()}
+  if(sel!==id){sel=id;closePop();renderEditor()}
   renderDiagram();if(moved)renderOut(true);
 });
-$('#bLayout').onclick=()=>{MADB.autoLayout(S,true);renderAll()};
+/* clicar no fundo do canvas fecha o editor */
+$('#canvas').addEventListener('pointerdown',e=>{
+  if(e.target.closest('.tb,[data-a],#pop'))return;
+  if(sel===null)return;
+  sel=null;closePop();renderEditor();renderDiagram();
+});
+$('#canvas').addEventListener('scroll',closePop);
+$('#svg').addEventListener('click',e=>{
+  const a=e.target.closest('[data-a]');if(!a)return;
+  const t=tOf(sel);if(!t)return;
+  if(a.dataset.a==='addCol'){const c=mkCol(t,'coluna_'+(t.cols.length+1),'text');renderAll();openPop(t,c)}
+  else if(a.dataset.a==='pickCol'){const c=cOf(t,a.dataset.cid);if(c)openPop(t,c,a)}
+});
+
+/* popover de coluna: nome, tipo, PK/NOT NULL/UNIQUE, remover */
+let popCtx=null;
+function closePop(){popCtx=null;const p=$('#pop');if(p){p.hidden=true;p.innerHTML=''}}
+function popCol(){if(!popCtx)return {};const t=tOf(popCtx.t);return {t,c:t?cOf(t,popCtx.c):null}}
+function openPop(t,c,anchor){
+  popCtx={t:t.id,c:c.id};
+  const p=$('#pop');
+  p.innerHTML=`<div class="pr1"><input type="text" data-pp="name" value="${esc(c.name)}" aria-label="nome da coluna">
+      <input type="text" list="types" data-pp="type" value="${esc(c.type)}" aria-label="tipo"></div>
+    <div class="pr2"><label><input type="checkbox" data-pp="pk" ${c.pk?'checked':''}>PK</label>
+      <label><input type="checkbox" data-pp="nn" ${c.nn||c.pk?'checked':''} ${c.pk?'disabled':''}>NOT NULL</label>
+      <label><input type="checkbox" data-pp="uq" ${c.uq?'checked':''}>UNIQUE</label></div>
+    <div class="pr2"><span class="muted">${esc(t.name)}.${esc(c.name)}</span><span class="spacer"></span>
+      <button class="sm danger" data-pp="del">Remover</button><button class="sm" data-pp="close">Fechar</button></div>`;
+  p.hidden=false;
+  const a=anchor||document.querySelector(`#svg [data-a="pickCol"][data-cid="${c.id}"]`)||$('#svg');
+  const r=a.getBoundingClientRect();
+  p.style.left=Math.max(8,Math.min(r.right+12,innerWidth-310))+'px';
+  p.style.top=Math.max(8,Math.min(r.top-6,innerHeight-p.offsetHeight-8))+'px';
+}
+$('#pop').addEventListener('input',e=>{
+  const f=e.target.dataset.pp,{c}=popCol();if(!c||!f)return;
+  if(f==='name'||f==='type'){c[f]=e.target.value;renderAll()}
+});
+$('#pop').addEventListener('change',e=>{
+  const f=e.target.dataset.pp,{t,c}=popCol();if(!c||!f)return;
+  if(f==='pk'){c.pk=e.target.checked;if(c.pk)c.nn=true}
+  else if(f==='nn'||f==='uq'){c[f]=e.target.checked}
+  else return;
+  renderAll();openPop(t,c);
+});
+$('#pop').addEventListener('click',e=>{
+  const f=e.target.dataset.pp,{t,c}=popCol();if(!c||!f)return;
+  if(f==='close')closePop();
+  else if(f==='del'){t.cols=t.cols.filter(x=>x.id!==c.id);prune();closePop();renderAll()}
+});
+document.addEventListener('pointerdown',e=>{if(!$('#pop').hidden&&!e.target.closest('#pop,[data-a]'))closePop()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closePop()});
+
+/* ---------- barra do diagrama ---------- */
+$('#bLayout').onclick=()=>{layoutSchemas(true);needFit=true;renderOut()};
+$('#bFit').onclick=()=>{needFit=true;renderDiagram()};
 $('#bZp').onclick=()=>{zoom=Math.min(2,+(zoom+.1).toFixed(1));renderDiagram()};
-$('#bZm').onclick=()=>{zoom=Math.max(.4,+(zoom-.1).toFixed(1));renderDiagram()};
+$('#bZm').onclick=()=>{zoom=Math.max(.3,+(zoom-.1).toFixed(1));renderDiagram()};
+$('#bModel').onclick=()=>{sel=sel===MODEL?null:MODEL;closePop();renderAll()};
+$('#bClose').onclick=()=>{sel=null;closePop();renderAll()};
+
+/* ---------- paletas ---------- */
+const PALETTES={
+  amarelo:{label:'Preto e amarelo (padrão)',dark:true,v:{'--bg':'#0a0a0a','--panel':'#141414','--panel2':'#1c1c1c','--line':'#2e2e2e','--text':'#f2f2f2','--muted':'#9a9a9a','--accent':'#facc15','--accent-ink':'#0a0a0a','--accent-soft':'#2a2505','--warn':'#facc15','--warn-bg':'#2a2505','--danger':'#ff6b6b','--pk':'#facc15','--fk':'#a3a3a3','--code-bg':'#050505','--code-ink':'#e5e5e5'}},
+  grafite:{label:'Grafite e azul',dark:true,v:{'--bg':'#111317','--panel':'#1a1d23','--panel2':'#232730','--line':'#343a46','--text':'#e6e9ef','--muted':'#8b93a3','--accent':'#5aa9e6','--accent-ink':'#08121c','--accent-soft':'#17293b','--warn':'#f0b35a','--warn-bg':'#33270f','--danger':'#f97066','--pk':'#e3b04b','--fk':'#5fc79a','--code-bg':'#0b0d11','--code-ink':'#d6e2f0'}},
+  carvao:{label:'Carvão e laranja',dark:true,v:{'--bg':'#0d0d0d','--panel':'#161616','--panel2':'#202020','--line':'#333333','--text':'#f0ece4','--muted':'#a39e93','--accent':'#ff7a1a','--accent-ink':'#140a02','--accent-soft':'#2e1a09','--warn':'#ffb347','--warn-bg':'#2e2009','--danger':'#ff5c5c','--pk':'#ffb347','--fk':'#7fd1b9','--code-bg':'#080808','--code-ink':'#eadfcc'}},
+  claro:{label:'Claro (original)',dark:false,v:{'--bg':'#f6f7f9','--panel':'#ffffff','--panel2':'#f0f2f5','--line':'#d9dde3','--text':'#1c2330','--muted':'#667085','--accent':'#2f5d9e','--accent-ink':'#ffffff','--accent-soft':'#e6eefb','--warn':'#a15c00','--warn-bg':'#fff4e0','--danger':'#b42318','--pk':'#b7791f','--fk':'#2f7d5b','--code-bg':'#0f1722','--code-ink':'#d6e2f0'}}
+};
+function applyPal(k){
+  if(!PALETTES[k])k='amarelo';
+  const root=document.documentElement;
+  Object.entries(PALETTES[k].v).forEach(([n,v])=>root.style.setProperty(n,v));
+  root.style.colorScheme=PALETTES[k].dark?'dark':'light';
+  $('#palSel').value=k;
+  try{localStorage.setItem('madb_pal',k)}catch(e){}
+}
+$('#palSel').innerHTML=Object.entries(PALETTES).map(([k,p])=>`<option value="${k}">${esc(p.label)}</option>`).join('');
+$('#palSel').onchange=e=>applyPal(e.target.value);
+applyPal((()=>{try{return localStorage.getItem('madb_pal')||'amarelo'}catch(e){return 'amarelo'}})());
 
 /* ---------- geradores ---------- */
 const naming=()=>(S.options&&S.options.indexNaming)||'idx';
@@ -679,7 +812,7 @@ function importText(text,origem,after){
   const go=mode=>{ // 'novo' | 'substituir'
     if(mode==='novo'){saveDB();const w=newWs(origem.replace(/\.json$/i,''),r.model);DB.active=w.id;S=w.model;loadLink();}
     else{S=r.model;cur().model=S}
-    sel=S.tables[0]?S.tables[0].id:null;zoom=1;
+    sel=null;needFit=true;
     markSynced(null,'importado de '+origem);
     renderWs();renderAll();if(after)after(r);
   };
@@ -726,7 +859,7 @@ function renderWs(){
 }
 function switchTo(id){
   saveDB();
-  DB.active=id;S=cur().model;sel=S.tables[0]?S.tables[0].id:null;zoom=1;
+  DB.active=id;S=cur().model;sel=null;needFit=true;
   $('#canvas').scrollTo(0,0);
   loadLink();
   renderWs();renderAll();
@@ -773,7 +906,7 @@ $('#bWsDel').onclick=()=>openModal({
     const id=DB.active;
     DB.ws=DB.ws.filter(w=>w.id!==id);idbDel(id);
     if(!DB.ws.length)newWs('Nova arquitetura',MADB.emptyModel());
-    DB.active=DB.ws[0].id;S=cur().model;sel=S.tables[0]?S.tables[0].id:null;zoom=1;
+    DB.active=DB.ws[0].id;S=cur().model;sel=null;needFit=true;
     loadLink();renderWs();renderAll();
   }
 });
@@ -845,7 +978,7 @@ async function pullFromFile(manual){
     if(r.errors.length||!r.model){showImport(r,file.name);w.fileStamp=file.lastModified;return}
     const incoming=r.model,same=MADB.stableStringify(stripXY(MADB.serialize(incoming)))===modelHash();
     if(same){markSynced(file.lastModified);renderStatus();if(manual)showImport(r,file.name+' (já estava igual)');return}
-    const apply=()=>{S=keepPositions(incoming);w.model=S;if(!S.tables.find(t=>t.id===sel)&&sel!==MODEL)sel=S.tables[0]?S.tables[0].id:null;
+    const apply=()=>{S=keepPositions(incoming);w.model=S;if(!S.tables.find(t=>t.id===sel)&&sel!==MODEL)sel=null;
       markSynced(file.lastModified,'recebido do arquivo '+file.name);showImport(r,file.name);renderAll()};
     if(!isDirty()&&w.syncHash!=null||!S.tables.length&&!S.enums.length&&!S.functions.length)apply();
     else openModal({title:'O arquivo mudou e você também alterou aqui',input:false,ok:'Continuar',
@@ -857,7 +990,7 @@ async function pullFromFile(manual){
         if(v==='arquivo')apply();
         else if(v==='minha'){w.fileStamp=file.lastModified;renderStatus()}
         else{saveDB();const nw=newWs(w.name+' (do arquivo)',incoming);nw.link=w.link;idbSet(nw.id,link.handle);nw.fileStamp=file.lastModified;
-          DB.active=nw.id;S=nw.model;sel=S.tables[0]?S.tables[0].id:null;markSynced(file.lastModified,'recebido do arquivo '+file.name);loadLink();renderWs();renderAll();showImport(r,file.name)}
+          DB.active=nw.id;S=nw.model;sel=null;markSynced(file.lastModified,'recebido do arquivo '+file.name);loadLink();renderWs();renderAll();showImport(r,file.name)}
       },
       onCancel:()=>{}});
   }catch(e){if(manual)showImport({errors:[{path:'(arquivo)',message:'Falha ao ler o arquivo vinculado: '+e.message}],warnings:[],notes:[]},'arquivo')}
@@ -901,7 +1034,7 @@ setInterval(()=>{const w=cur();if(w&&w.auto&&link&&!document.hidden&&$('#modal')
   }catch(e){}
   if(!DB.ws.length){DB.ws=[{id:nid(),name:'Exemplo e-commerce',model:sample(),origin:{text:'exemplo do MADB',at:Date.now()}}]}
   if(!DB.ws.some(w=>w.id===DB.active))DB.active=DB.ws[0].id;
-  S=cur().model;sel=S.tables[0]?S.tables[0].id:null;
+  S=cur().model;sel=null;
   syncNaming();
   loadLink();renderWs();renderAll();
 })();
