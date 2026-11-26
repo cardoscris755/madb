@@ -34,9 +34,9 @@ main.open aside{display:block}
 .canvas-wrap{flex:1;min-height:200px;display:flex;flex-direction:column;min-height:0}
 .toolbar{display:flex;gap:6px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);background:var(--panel)}
 .toolbar .hint{color:var(--muted);font-size:12px}
-.canvas{flex:1;overflow:auto;display:flex;background:
+.canvas{flex:1;overflow:hidden;position:relative;touch-action:none;background:
   radial-gradient(var(--line) 1px,transparent 1px) 0 0/20px 20px,var(--bg)}
-svg{display:block;margin:auto;flex:none}
+svg{display:block;width:100%;height:100%;user-select:none}
 .out{height:300px;border-top:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
 .right.nocode .out{display:none}
 button:disabled{opacity:.4;cursor:default}
@@ -239,7 +239,7 @@ details.more .r{margin-top:6px}
 <script>
 'use strict';
 const W=230,HH=34,RH=22,HEAD=44,COLGAP=70,TGAP=40;
-let needFit=true,dim={w:320,h:240};
+let needFit=true,dim={w:320,h:240},ctr={x:0,y:0},panX=0,panY=0;
 const DEL=MADB.DEL_ACTIONS;
 let S=MADB.emptyModel(),sel=null,zoom=1,tab='sql';
 let idN=0;const nid=()=>'w'+Date.now().toString(36)+(++idN)+Math.random().toString(36).slice(2,5);
@@ -660,9 +660,9 @@ function edge(s,c,t,rc,many){
   <text class="card" x="${x2+d2*12-(d2<0?4:0)}" y="${y2-5}" text-anchor="${d2>0?'start':'end'}">1</text>`;
 }
 function fitZoom(){
-  const c=$('#canvas');const aw=c.clientWidth-32,ah=c.clientHeight-32;
-  if(aw<=0||ah<=0)return;
-  zoom=+Math.max(.3,Math.min(1.2,aw/dim.w,ah/dim.h)).toFixed(2);
+  const c=$('#canvas');const aw=c.clientWidth||800,ah=c.clientHeight||600;
+  zoom=+Math.max(.2,Math.min(1.5,aw/dim.w,ah/dim.h)).toFixed(3);
+  panX=aw/2-ctr.x*zoom;panY=ah/2-ctr.y*zoom;
 }
 function renderDiagram(){
   layoutSchemas(false);
@@ -675,19 +675,14 @@ function renderDiagram(){
   if(!S.tables.length){x0=0;y0=0;x1=320;y1=240}
   const cw=x1-x0,ch=y1-y0;
   dim={w:cw+60,h:ch+60};
+  ctr={x:(x0+x1)/2,y:(y0+y1)/2};
   const wasFit=needFit&&S.tables.length>0;
   if(wasFit){fitZoom();needFit=false}
-  /* área infinita: uma tela de folga em volta do conteúdo, para levar tabelas a qualquer canto */
-  const cv=$('#canvas');
-  const padX=Math.max(120,(cv.clientWidth||800)/zoom),padY=Math.max(120,(cv.clientHeight||600)/zoom);
-  const ox=x0-padX,oy=y0-padY-30,vw=cw+2*padX,vh=ch+30+2*padY+40;
   const svg=$('#svg');
-  svg.setAttribute('viewBox',`${ox} ${oy} ${vw} ${vh}`);svg.setAttribute('width',vw*zoom);svg.setAttribute('height',vh*zoom);
-  if(wasFit){cv.scrollLeft=(vw*zoom-cv.clientWidth)/2;cv.scrollTop=(vh*zoom-cv.clientHeight)/2}
   let o='';
   if(!S.tables.length){
     o='<text x="30" y="50" fill="currentColor" opacity=".5" font-size="14">Adicione uma tabela ou importe um JSON para começar o diagrama.</text>';
-    svg.innerHTML=o;$('#zl').textContent=Math.round(zoom*100)+'%';return;
+    svg.innerHTML=worldG(o);applyView();return;
   }
   schemaGroups().forEach(grp=>{
     const x=Math.min(...grp.tables.map(t=>t.x)),y=Math.min(...grp.tables.map(t=>t.y))-12;
@@ -732,8 +727,7 @@ function renderDiagram(){
     });
     o+=`<g class="fab pill" data-a="addCol" transform="translate(${st.x+W/2-46},${st.y+tH(st)+8})"><rect width="92" height="22" rx="11"/><text x="46" y="15" text-anchor="middle">+ coluna</text></g>`;
   }
-  svg.innerHTML=o;
-  $('#zl').textContent=Math.round(zoom*100)+'%';
+  svg.innerHTML=worldG(o);applyView();
 }
 let drag=null;
 $('#svg').addEventListener('pointerdown',e=>{
@@ -824,15 +818,25 @@ $('#bCode').onclick=()=>{
 $('#bZp').onclick=()=>setZoom(zoom*1.2);
 $('#bZm').onclick=()=>setZoom(zoom/1.2);
 
-/* zoom: troca o fator e mantém o ponto sob o cursor no mesmo lugar */
+/* câmera: zoom e pan sem barra de rolagem. O ponto sob o cursor fica parado ao dar zoom */
+const worldT=()=>`translate(${panX} ${panY}) scale(${zoom})`;
+const worldG=o=>`<g id="world" transform="${worldT()}">${o}</g>`;
+function applyView(){
+  const w=$('#world');if(w)w.setAttribute('transform',worldT());
+  const cv=$('#canvas');
+  cv.style.backgroundSize=`${20*zoom}px ${20*zoom}px`;
+  cv.style.backgroundPosition=`${panX}px ${panY}px`;
+  $('#zl').textContent=Math.round(zoom*100)+'%';
+}
 function setZoom(z,cx,cy){
-  const c=$('#canvas'),svg=$('#svg');
+  const cv=$('#canvas');
   const nz=+Math.max(.2,Math.min(3,z)).toFixed(3);
   if(nz===zoom)return;
-  let wx=null,wy=null;
-  if(cx!=null){const r=svg.getBoundingClientRect();wx=(cx-r.left)/zoom;wy=(cy-r.top)/zoom}
-  zoom=nz;needFit=false;renderDiagram();
-  if(wx!=null){const r=svg.getBoundingClientRect();c.scrollLeft+=r.left+wx*zoom-cx;c.scrollTop+=r.top+wy*zoom-cy}
+  const r=cv.getBoundingClientRect();
+  const px=cx==null?cv.clientWidth/2:cx-r.left,py=cy==null?cv.clientHeight/2:cy-r.top;
+  const wx=(px-panX)/zoom,wy=(py-panY)/zoom;
+  zoom=nz;panX=px-wx*nz;panY=py-wy*nz;
+  needFit=false;applyView();
 }
 $('#canvas').addEventListener('wheel',e=>{
   if(!S.tables.length)return;
@@ -841,7 +845,7 @@ $('#canvas').addEventListener('wheel',e=>{
   setZoom(zoom*Math.exp(-dy*0.0015),e.clientX,e.clientY);
 },{passive:false});
 
-/* pan: segurar o botão do meio (scroll) e arrastar */
+/* pan: botão do meio, ou arrastar o fundo vazio com o botão esquerdo */
 let pan=null;
 const cvs=$('#canvas');
 cvs.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault()});
@@ -849,20 +853,20 @@ cvs.addEventListener('pointerdown',e=>{
   const onBg=e.button===0&&!e.target.closest('.tb,[data-a],#pop');
   if(e.button!==1&&!onBg)return;
   e.preventDefault();
-  pan={x:e.clientX,y:e.clientY,l:cvs.scrollLeft,t:cvs.scrollTop};
+  pan={x:e.clientX,y:e.clientY};
+  closePop();
   cvs.style.cursor='grabbing';
   try{cvs.setPointerCapture(e.pointerId)}catch(_){}
 });
 cvs.addEventListener('pointermove',e=>{
   if(!pan)return;
-  cvs.scrollLeft=pan.l-(e.clientX-pan.x);
-  cvs.scrollTop=pan.t-(e.clientY-pan.y);
+  panX+=e.clientX-pan.x;panY+=e.clientY-pan.y;
+  pan.x=e.clientX;pan.y=e.clientY;
+  applyView();
 });
 const endPan=()=>{pan=null;cvs.style.cursor=''};
 cvs.addEventListener('pointerup',endPan);
 cvs.addEventListener('pointercancel',endPan);
-$('#bModel').onclick=()=>{sel=sel===MODEL?null:MODEL;closePop();renderAll()};
-$('#bClose').onclick=()=>{sel=null;closePop();renderAll()};
 
 /* ---------- paletas ---------- */
 const PALETTES={
