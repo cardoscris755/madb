@@ -972,7 +972,8 @@ $('#bClose').onclick=()=>{sel=null;closePop();renderAll()};
 const SRV_KEY='madb_srv';
 const PEER_COLORS=['#facc15','#60a5fa','#f472b6','#34d399','#fb923c','#a78bfa','#f87171','#22d3ee'];
 const SALA={ws:null,room:null,srv:'',me:'',name:'',color:'',peers:{},lastT:{},lastOrder:'',lastMeta:'',applying:false,ready:false,pendingEdit:false,retry:null};
-const srvPadrao=()=>{try{return localStorage.getItem(SRV_KEY)||''}catch(e){return ''}};
+const SRV_PADRAO='wss://madb-sala.madb-sala.workers.dev';
+const srvPadrao=()=>{try{return localStorage.getItem(SRV_KEY)||SRV_PADRAO}catch(e){return SRV_PADRAO}};
 const salaAtiva=()=>!!(SALA.ws&&SALA.ws.readyState===1);
 const editando=()=>{const a=document.activeElement;return !!a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'||a.tagName==='SELECT')&&!!a.closest('#editor,#pop,#relp')};
 function randId(){const a=new Uint8Array(12);crypto.getRandomValues(a);return Array.from(a,b=>'abcdefghijklmnopqrstuvwxyz0123456789'[b%36]).join('')}
