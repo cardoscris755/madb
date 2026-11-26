@@ -656,7 +656,7 @@ function renderDiagram(){
 }
 let drag=null;
 $('#svg').addEventListener('pointerdown',e=>{
-  if(e.target.closest('[data-a]'))return;
+  if(e.button!==0||e.target.closest('[data-a]'))return;
   const g=e.target.closest('.tb');if(!g)return;
   const t=tOf(g.dataset.id);if(!t)return;
   drag={id:t.id,sx:e.clientX,sy:e.clientY,ox:t.x,oy:t.y,moved:false};
@@ -678,7 +678,7 @@ window.addEventListener('pointerup',()=>{
 });
 /* clicar no fundo do canvas fecha o editor */
 $('#canvas').addEventListener('pointerdown',e=>{
-  if(e.target.closest('.tb,[data-a],#pop'))return;
+  if(e.button!==0||e.target.closest('.tb,[data-a],#pop'))return;
   if(sel===null)return;
   sel=null;closePop();renderEditor();renderDiagram();
 });
@@ -738,8 +738,45 @@ $('#bCode').onclick=()=>{
   if(show)renderOut(true);
   needFit=true;renderDiagram();
 };
-$('#bZp').onclick=()=>{zoom=Math.min(2,+(zoom+.1).toFixed(1));renderDiagram()};
-$('#bZm').onclick=()=>{zoom=Math.max(.3,+(zoom-.1).toFixed(1));renderDiagram()};
+$('#bZp').onclick=()=>setZoom(zoom*1.2);
+$('#bZm').onclick=()=>setZoom(zoom/1.2);
+
+/* zoom: troca o fator e mantém o ponto sob o cursor no mesmo lugar */
+function setZoom(z,cx,cy){
+  const c=$('#canvas'),svg=$('#svg');
+  const nz=+Math.max(.2,Math.min(3,z)).toFixed(3);
+  if(nz===zoom)return;
+  let wx=null,wy=null;
+  if(cx!=null){const r=svg.getBoundingClientRect();wx=(cx-r.left)/zoom;wy=(cy-r.top)/zoom}
+  zoom=nz;needFit=false;renderDiagram();
+  if(wx!=null){const r=svg.getBoundingClientRect();c.scrollLeft+=r.left+wx*zoom-cx;c.scrollTop+=r.top+wy*zoom-cy}
+}
+$('#canvas').addEventListener('wheel',e=>{
+  if(!S.tables.length)return;
+  e.preventDefault();
+  const dy=e.deltaMode===1?e.deltaY*16:e.deltaY;
+  setZoom(zoom*Math.exp(-dy*0.0015),e.clientX,e.clientY);
+},{passive:false});
+
+/* pan: segurar o botão do meio (scroll) e arrastar */
+let pan=null;
+const cvs=$('#canvas');
+cvs.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault()});
+cvs.addEventListener('pointerdown',e=>{
+  if(e.button!==1)return;
+  e.preventDefault();
+  pan={x:e.clientX,y:e.clientY,l:cvs.scrollLeft,t:cvs.scrollTop};
+  cvs.style.cursor='grabbing';
+  try{cvs.setPointerCapture(e.pointerId)}catch(_){}
+});
+cvs.addEventListener('pointermove',e=>{
+  if(!pan)return;
+  cvs.scrollLeft=pan.l-(e.clientX-pan.x);
+  cvs.scrollTop=pan.t-(e.clientY-pan.y);
+});
+const endPan=()=>{pan=null;cvs.style.cursor=''};
+cvs.addEventListener('pointerup',endPan);
+cvs.addEventListener('pointercancel',endPan);
 $('#bModel').onclick=()=>{sel=sel===MODEL?null:MODEL;closePop();renderAll()};
 $('#bClose').onclick=()=>{sel=null;closePop();renderAll()};
 
