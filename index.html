@@ -144,22 +144,47 @@ details.more .r{margin-top:6px}
 .pop .pr2 label{display:flex;gap:3px;align-items:center;cursor:pointer}
 .pop .pr2 .spacer{flex:1}
 .pop .muted{color:var(--muted);font:11px ui-monospace,Menlo,Consolas,monospace}
+[data-tip]{position:relative}
+[data-tip]:hover::after,[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;top:calc(100% + 7px);left:50%;transform:translateX(-50%);background:var(--code-bg);color:var(--code-ink);padding:5px 9px;border-radius:6px;font:12px/1.35 system-ui,sans-serif;width:max-content;max-width:300px;z-index:120;pointer-events:none;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+header{padding:8px 14px;gap:14px}
+.brand{font-weight:800;letter-spacing:.6px;font-size:15px;color:var(--accent)}
+.ws{margin-left:0;padding-left:0;border-left:none}
+.ws select{max-width:220px}
+.avatar{width:30px;height:30px;border-radius:50%;padding:0;display:flex;align-items:center;justify-content:center;font-weight:700;background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.statusbar{font-size:12px;padding:4px 14px}
+.toolbar{padding:6px 10px;gap:4px}
+.sep{width:1px;height:18px;background:var(--line);margin:0 4px}
+.zl{min-width:44px;text-align:center;font-size:12px;color:var(--muted)}
+.sm.on{border-color:var(--accent);color:var(--accent)}
+.warnt{color:var(--warn)}.okt{color:var(--fk)}
+.userp{left:auto!important;right:12px;top:52px;width:280px}
+.userp .uh{font-weight:650;margin-bottom:10px}
+.userp .ul{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);margin-bottom:10px}
+.userp .ul input,.userp .ul select{font-size:14px;color:var(--text);padding:6px 8px}
+.userp .un{font-size:11.5px;color:var(--muted);margin:0}
+.hint{display:none}
 </style>
 </head>
 <body>
 <header>
-  <h1>MADB<span>modelagem PostgreSQL · diagrama ER · DDL</span></h1>
+  <div class="brand">MADB</div>
   <div class="ws">
-    <label for="wsSel">Arquitetura</label>
-    <select id="wsSel" aria-label="Arquitetura ativa"></select>
-    <button id="bWsNew" class="primary">+ Nova arquitetura</button>
-    <button id="bWsRen">Renomear</button>
-    <button id="bWsDup">Duplicar</button>
-    <button id="bWsDel" class="ghost danger">Excluir</button>
+    <select id="wsSel" aria-label="Arquitetura ativa" data-tip="Trocar de arquitetura"></select>
+    <button id="bWsNew" class="sm primary" data-tip="Criar uma nova arquitetura (área de trabalho separada)">+ Nova</button>
+    <button id="bWsRen" class="sm ghost" data-tip="Renomear a arquitetura atual">Renomear</button>
+    <button id="bWsDup" class="sm ghost" data-tip="Criar uma cópia da arquitetura atual">Duplicar</button>
+    <button id="bWsDel" class="sm ghost danger" data-tip="Excluir a arquitetura atual">Excluir</button>
   </div>
   <div class="spacer"></div>
-  <button id="bClear" class="ghost danger">Limpar esta arquitetura</button>
+  <button id="bClear" class="sm ghost danger" data-tip="Apagar todas as tabelas desta arquitetura (pede confirmação)">Esvaziar</button>
+  <button id="bUser" class="avatar" data-tip="Seu perfil e preferências" aria-label="Perfil">?</button>
 </header>
+<div class="userp pop" id="userp" hidden>
+  <div class="uh">Seu perfil</div>
+  <label class="ul">Nome<input type="text" id="uName" maxlength="60" placeholder="Como você quer aparecer"></label>
+  <label class="ul">Paleta de cores<select id="palSel" aria-label="Paleta de cores"></select></label>
+  <p class="un">Guardado só neste navegador.</p>
+</div>
 <div class="modal-bg" id="modal" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
     <h2 id="mTitle"></h2>
@@ -170,13 +195,13 @@ details.more .r{margin-top:6px}
   </div>
 </div>
 <div class="statusbar" id="status">
-  <span id="origin">Origem: edição local</span>
+  <span id="origin"></span>
   <span class="spacer"></span>
-  <button class="sm" id="bOpen" title="Escolher um arquivo .json (ou arraste-o para a página)">Abrir arquivo…</button>
-  <button class="sm" id="bLink" hidden>Vincular arquivo…</button>
-  <button class="sm" id="bReload" hidden>Recarregar do arquivo</button>
-  <button class="sm" id="bSave" hidden>Gravar no arquivo</button>
-  <label id="autoW" hidden><input type="checkbox" id="optAuto"> sincronizar sozinho</label>
+  <button class="sm ghost" id="bOpen" data-tip="Abrir um arquivo .json (ou arraste o arquivo para a página)">Abrir arquivo</button>
+  <button class="sm ghost" id="bLink" data-tip="Vincular a um arquivo .json para sincronizar" hidden>Vincular</button>
+  <button class="sm ghost" id="bReload" data-tip="Ler de novo o arquivo vinculado" hidden>Recarregar</button>
+  <button class="sm ghost" id="bSave" data-tip="Gravar esta arquitetura no arquivo vinculado" hidden>Gravar</button>
+  <label id="autoW" hidden data-tip="Acompanhar o arquivo vinculado automaticamente"><input type="checkbox" id="optAuto"> Auto</label>
   <input type="file" id="fileIn" accept=".json,application/json" hidden>
 </div>
 <div class="dropov" id="dropov" hidden>Solte o arquivo .json para importar</div>
@@ -189,19 +214,19 @@ details.more .r{margin-top:6px}
   <div class="right nocode" id="right">
     <div class="canvas-wrap">
       <div class="toolbar">
-        <button class="sm primary" id="bAddT">+ Tabela</button>
-        <button class="sm" id="bUndo" title="Desfazer (Ctrl+Z)">↶ Desfazer</button>
-        <button class="sm" id="bRedo" title="Refazer (Ctrl+Y ou Ctrl+Shift+Z)">↷ Refazer</button>
-        <button class="sm" id="bModel">⚙ Modelo</button>
-        <button class="sm" id="bLayout">Organizar por schema</button>
-        <button class="sm" id="bFit">Ajustar</button>
-        <button class="sm" id="bZm">−</button>
-        <span id="zl" style="min-width:42px;text-align:center;font-size:12px">100%</span>
-        <button class="sm" id="bZp">+</button>
-        <span style="flex:1"></span>
-        <button class="sm" id="bCode" title="Mostrar ou ocultar SQL, Mermaid e JSON">Código ▸</button>
-        <label class="opt">Paleta <select id="palSel" aria-label="Paleta de cores"></select></label>
-        <span class="hint">Clique numa tabela para editar · ✎ ao lado de uma coluna</span>
+        <button class="sm primary" id="bAddT" data-tip="Criar uma tabela">+ Tabela</button>
+        <button class="sm" id="bModel" data-tip="Schemas, enums, funções e opções do modelo">Modelo</button>
+        <button class="sm" id="bLayout" data-tip="Organizar as tabelas em colunas por schema">Organizar</button>
+        <button class="sm" id="bFit" data-tip="Enquadrar tudo na tela">Ajustar</button>
+        <span class="sep"></span>
+        <button class="sm" id="bUndo" data-tip="Desfazer (Ctrl+Z)">↶</button>
+        <button class="sm" id="bRedo" data-tip="Refazer (Ctrl+Y)">↷</button>
+        <span class="sep"></span>
+        <button class="sm" id="bZm" data-tip="Diminuir zoom (ou roda do mouse)">−</button>
+        <span id="zl" class="zl">100%</span>
+        <button class="sm" id="bZp" data-tip="Aumentar zoom (ou roda do mouse)">+</button>
+        <span class="spacer"></span>
+        <button class="sm" id="bCode" data-tip="Mostrar ou ocultar o código gerado (SQL, Mermaid, JSON)">Código</button>
       </div>
       <div class="canvas" id="canvas"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
     </div>
@@ -811,7 +836,7 @@ $('#bLayout').onclick=()=>{histBefore(null);layoutSchemas(true);needFit=true;ren
 $('#bFit').onclick=()=>{needFit=true;renderDiagram()};
 $('#bCode').onclick=()=>{
   const r=$('#right'),show=r.classList.toggle('nocode')===false;
-  $('#bCode').textContent=show?'Código ▾':'Código ▸';
+  $('#bCode').classList.toggle('on',show);
   if(show)renderOut(true);
   needFit=true;renderDiagram();
 };
@@ -870,6 +895,19 @@ cvs.addEventListener('pointercancel',endPan);
 
 $('#bModel').onclick=()=>{sel=sel===MODEL?null:MODEL;closePop();renderAll()};
 $('#bClose').onclick=()=>{sel=null;closePop();renderAll()};
+
+/* ---------- perfil (só neste navegador) ---------- */
+const USER_KEY='madb_user';
+function loadUser(){try{return JSON.parse(localStorage.getItem(USER_KEY))||{}}catch(e){return {}}}
+function paintAvatar(){const n=String(loadUser().name||'').trim();$('#bUser').textContent=n?n[0].toUpperCase():'?'}
+$('#bUser').onclick=e=>{
+  e.stopPropagation();const p=$('#userp');
+  p.hidden=!p.hidden;if(!p.hidden)$('#uName').value=loadUser().name||'';
+};
+$('#uName').oninput=e=>{try{localStorage.setItem(USER_KEY,JSON.stringify({name:e.target.value.slice(0,60)}))}catch(_){}paintAvatar()};
+document.addEventListener('pointerdown',e=>{if(!$('#userp').hidden&&!e.target.closest('#userp,#bUser'))$('#userp').hidden=true});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')$('#userp').hidden=true});
+paintAvatar();
 
 /* ---------- paletas ---------- */
 const PALETTES={
@@ -1063,7 +1101,11 @@ function renderStatus(){
   const w=cur();if(!w)return;
   const o=w.origin||{text:'edição local',at:Date.now()};
   const dirty=isDirty();
-  $('#origin').innerHTML=`Origem: <b>${esc(o.text)}</b> · ${hhmm(o.at)}`+(w.link?` · arquivo vinculado: <b>${esc(w.link.name)}</b>`:'')+(dirty?' · <span style="color:var(--warn)">alterações locais ainda não gravadas no arquivo</span>':'')+(w.link&&!link?' · <span style="color:var(--warn)">o navegador não guardou o acesso ao arquivo: clique em <b>Vincular arquivo…</b> de novo</span>':'')+(link&&permLost?' · <span style="color:var(--warn)">o navegador pediu nova permissão: clique em <b>Recarregar do arquivo</b></span>':'');
+  const o2=cur().origin||{text:'edição local',at:Date.now()};
+  const warn=(w.link&&!link)?'Vincule o arquivo de novo':(link&&permLost)?'Clique em Recarregar: o navegador pediu nova permissão':dirty?'Alterações não gravadas':'';
+  $('#origin').innerHTML=warn?`<span class="warnt">● ${esc(warn)}</span>`:'<span class="okt">● Salvo</span>';
+  $('#origin').dataset.tip=`${o2.text} · ${hhmm(o2.at)}`+(w.link?` · arquivo: ${w.link.name}`:'');
+
   $('#bLink').hidden=!FSA||!!link;
   $('#bReload').hidden=!link;
   $('#bSave').hidden=!link;
