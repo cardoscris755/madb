@@ -207,6 +207,32 @@
       if (!t.id) { do { seq++; } while (used['t' + seq] != null); t.id = 't' + seq; used[t.id] = t._i; legacy = legacy || !t._raw.id; }
     });
 
+    /* tipos de MySQL (export legado) -> PostgreSQL; enum inline vira enum nomeado */
+    var MYSQL_TYPES = { 'int unsigned': 'bigint', 'bigint unsigned': 'bigint', 'integer unsigned': 'bigint', 'int': 'integer', 'integer': 'integer',
+      'mediumint': 'integer', 'mediumint unsigned': 'bigint', 'smallint unsigned': 'integer', 'tinyint unsigned': 'smallint', 'tinyint': 'smallint',
+      'tinyint(1)': 'boolean', 'bool': 'boolean', 'boolean': 'boolean', 'datetime': 'timestamp', 'double': 'double precision', 'float': 'real',
+      'longtext': 'text', 'mediumtext': 'text', 'tinytext': 'text', 'longblob': 'bytea', 'mediumblob': 'bytea', 'blob': 'bytea', 'tinyblob': 'bytea',
+      'year': 'smallint' };
+    var mysqlSeen = {};
+    function mysqlType(raw, t, col, p) {
+      var low = String(raw).trim().toLowerCase().replace(/\s+/g, ' ');
+      var em = low.match(/^enum\s*\((.*)\)$/);
+      if (em) {
+        var vals = (String(raw).match(/'((?:[^']|'')*)'/g) || []).map(function (x) { return x.slice(1, -1).replace(/''/g, "'"); });
+        var en = { id: null, schema: t.schema || 'public', name: t.name + '_' + col.name, values: vals };
+        model.enums.push(en);
+        if (!mysqlSeen.enum) N(p + '.type', 'Enum inline (MySQL) em ' + t.name + '.' + col.name + ' foi criado como enum "' + en.name + '" com os mesmos valores.');
+        mysqlSeen.enum = 1;
+        return en.schema === 'public' ? en.name : en.schema + '.' + en.name;
+      }
+      if (Object.prototype.hasOwnProperty.call(MYSQL_TYPES, low)) {
+        if (!mysqlSeen[low]) N(p + '.type', 'Tipo "' + raw + '" (MySQL) foi trocado por "' + MYSQL_TYPES[low] + '" (PostgreSQL). Vale para todas as colunas desse tipo.');
+        mysqlSeen[low] = 1;
+        return MYSQL_TYPES[low];
+      }
+      return String(raw).trim();
+    }
+
     /* colunas */
     list.forEach(function (t) {
       var rc = Array.isArray(t._raw.cols) ? t._raw.cols : null;
@@ -221,6 +247,7 @@
           if (DEL_ACTIONS.indexOf(c.del) >= 0) col.del = c.del;
           else E(p + '.del', 'ON DELETE inválido "' + c.del + '" em ' + t.name + '.' + col.name + '. Use ' + DEL_ACTIONS.join(', ') + '.');
         }
+        col.type = mysqlType(col.type, t, col, p);
         var identity = c.identity ? str(c.identity).toUpperCase().replace(/\s+/g, ' ') : null;
         var m = col.type.match(IDENT_RE);
         if (m) {
@@ -229,6 +256,10 @@
           N(p + '.type', 'A coluna ' + t.name + '.' + col.name + ' trazia "GENERATED … AS IDENTITY" dentro do tipo; movido para o campo "identity".');
         }
         if (identity) {
+          if (identity === 'AUTO_INCREMENT' || identity === 'SERIAL') {
+            N(p + '.identity', '"' + identity + '" (MySQL) em ' + t.name + '.' + col.name + ' foi tratado como identity BY DEFAULT (PostgreSQL).');
+            identity = 'BY DEFAULT';
+          }
           if (identity === 'ALWAYS' || identity === 'BY DEFAULT') col.identity = identity;
           else E(p + '.identity', 'identity inválido "' + identity + '" em ' + t.name + '.' + col.name + '. Use ALWAYS ou BY DEFAULT.');
         }
