@@ -28,7 +28,7 @@ input[type=text],select,textarea{background:var(--panel);border:1px solid var(--
 input[type=text]:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
 main{flex:1;min-height:0;display:grid;grid-template-columns:1fr;position:relative;overflow:hidden}
 /* o editor desliza por cima do canvas: o tamanho do diagrama não muda e o mouse não sai do lugar */
-aside{position:absolute;top:0;right:0;bottom:0;width:370px;max-width:92%;z-index:30;background:var(--panel);border-left:1px solid var(--line);overflow:auto;padding:12px;min-height:0;box-shadow:-10px 0 28px rgba(0,0,0,.35);transform:translateX(104%);visibility:hidden;pointer-events:none;transition:transform .16s ease-out,visibility 0s linear .16s}
+aside{position:absolute;top:44px;left:0;bottom:0;width:370px;max-width:92%;z-index:30;background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:12px;min-height:0;box-shadow:10px 0 28px rgba(0,0,0,.35);transform:translateX(-104%);visibility:hidden;pointer-events:none;transition:transform .16s ease-out,visibility 0s linear .16s}
 main.open aside{transform:none;visibility:visible;pointer-events:auto;transition:transform .16s ease-out,visibility 0s}
 .right{display:flex;flex-direction:column;min-width:0;min-height:0}
 .canvas-wrap{flex:1;min-height:200px;display:flex;flex-direction:column;min-height:0}
@@ -867,6 +867,9 @@ cvs.addEventListener('pointermove',e=>{
 const endPan=()=>{pan=null;cvs.style.cursor=''};
 cvs.addEventListener('pointerup',endPan);
 cvs.addEventListener('pointercancel',endPan);
+
+$('#bModel').onclick=()=>{sel=sel===MODEL?null:MODEL;closePop();renderAll()};
+$('#bClose').onclick=()=>{sel=null;closePop();renderAll()};
 
 /* ---------- paletas ---------- */
 const PALETTES={
