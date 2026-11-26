@@ -173,7 +173,14 @@ header{padding:8px 14px;gap:14px}
 .pchips{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}
 .pchip{border:1px solid;border-radius:99px;padding:2px 9px;font-size:12px;color:var(--text)}
 .sm.on{border-color:var(--accent);color:var(--accent)}
-.tb .ct.enumt{fill:var(--accent);font-weight:600}
+.tb .ct.enumt{fill:var(--accent);font-weight:600;cursor:help}
+.etip{position:fixed;z-index:110;width:280px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:0 12px 32px rgba(0,0,0,.45);pointer-events:none;font:13px system-ui,sans-serif;color:var(--text)}
+.etip[hidden]{display:none}
+.etip .eh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.etip .eh b{color:var(--accent);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+.etip .eh span{font-size:11.5px;color:var(--muted)}
+.etip .ev{max-height:300px;overflow:hidden;display:flex;flex-direction:column;gap:4px}
+.etip .ev div{font:12px ui-monospace,Menlo,Consolas,monospace;background:var(--panel2);border-radius:5px;padding:4px 8px;white-space:nowrap}
 .rcn{font:700 11px system-ui,sans-serif;paint-order:stroke;stroke:#0a0a0a;stroke-width:3px}
 .relhit{fill:none;stroke:transparent;stroke-width:14;cursor:pointer}
 .edge{pointer-events:none}
@@ -767,7 +774,7 @@ function renderDiagram(){
       const tag=c.pk&&fk?'PK·FK':c.pk?'PK':fk?'FK':'';
       o+=`<text class="${c.pk?'tag-pk':'tag-fk'}" x="10" y="${y+15}">${tag}</text>
       <text class="cn" x="${tag?(tag.length>2?44:28):12}" y="${y+15}" ${c.pk?'font-weight="600"':''}>${esc(c.name)}${(c.nn||c.pk)?'':'?'}</text>
-      <text class="ct${enumNames.has(c.type)?' enumt':''}" x="${W-10}" y="${y+15}" text-anchor="end">${enumNames.has(c.type)?'◆ ':''}${esc(c.type.length>16?c.type.slice(0,15)+'…':c.type)}</text>`;
+      <text class="ct${enumNames.has(c.type)?' enumt':''}" ${enumNames.has(c.type)?`data-enum="${esc(c.type)}"`:''} x="${W-10}" y="${y+15}" text-anchor="end">${enumNames.has(c.type)?'◆ ':''}${esc(c.type.length>16?c.type.slice(0,15)+'…':c.type)}</text>`;
     });
     o+='</g>';
   });
@@ -929,6 +936,22 @@ function quick(q,t){
 }
 $('#bEnum').onclick=()=>openModal({title:'Novo enum',msg:'Nome do tipo (ex.: status_pedido). Os valores você edita em Modelo → Enums.',value:'novo_enum',ok:'Criar',
   onOk:name=>{const n=String(name||'').trim().replace(/\s+/g,'_');if(!n)return;histBefore(null);S.enums.push({id:MADB.newId(S,'enum'),schema:'public',name:n,values:['valor1','valor2']});sel=MODEL;renderAll()}});
+
+/* ---------- tooltip do enum (passar o mouse sobre a coluna) ---------- */
+const etip=document.createElement('div');etip.id='etip';etip.className='etip';etip.hidden=true;document.body.appendChild(etip);
+function placeEtip(x,y){etip.style.left=Math.max(8,Math.min(x+16,innerWidth-300))+'px';etip.style.top=Math.max(8,Math.min(y+16,innerHeight-etip.offsetHeight-8))+'px'}
+$('#svg').addEventListener('pointerover',e=>{
+  const el=e.target.closest&&e.target.closest('[data-enum]');
+  if(!el){etip.hidden=true;return}
+  const name=el.dataset.enum;
+  const en=S.enums.find(x=>x.name===name||(x.schema||'public')+'.'+x.name===name);
+  if(!en){etip.hidden=true;return}
+  etip.innerHTML=`<div class="eh"><b>${esc(en.name)}</b><span>${en.values.length} valores</span></div><div class="ev">${en.values.map(v=>`<div>${esc(v)}</div>`).join('')}</div>`;
+  etip.hidden=false;placeEtip(e.clientX,e.clientY);
+});
+$('#svg').addEventListener('pointermove',e=>{if(!etip.hidden)placeEtip(e.clientX,e.clientY)});
+$('#svg').addEventListener('pointerleave',()=>{etip.hidden=true});
+window.addEventListener('scroll',()=>{etip.hidden=true},true);
 
 /* ---------- barra do diagrama ---------- */
 $('#bLayout').onclick=()=>{histBefore(null);layoutSchemas(true);needFit=true;renderOut()};
