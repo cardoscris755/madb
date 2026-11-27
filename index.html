@@ -50,6 +50,9 @@ button:disabled:hover{border-color:var(--line)}
 textarea.code{flex:1;width:100%;border:none;border-radius:0;background:var(--code-bg);color:var(--code-ink);font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:10px 14px;resize:none;tab-size:2;white-space:pre}
 .warns{background:var(--warn-bg);color:var(--warn);font-size:12px;padding:5px 12px;border-top:1px solid var(--line);max-height:70px;overflow:auto}
 .warns:empty{display:none}
+.warns.closed{display:none}
+.warns .wbar{position:sticky;top:-5px;display:flex;align-items:center;gap:6px;background:var(--warn-bg);padding:2px 0 4px;margin-bottom:2px}
+.warns .wt{font-weight:600}
 /* editor */
 .sec{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin:2px 0 6px;display:flex;align-items:center}
 .sec .spacer{flex:1}
@@ -297,6 +300,7 @@ header{padding:8px 14px;gap:14px}
 <script>
 'use strict';
 const W=230,HH=34,RH=22,HEAD=44,COLGAP=70,TGAP=40;
+let warnKey='',warnsHidden=false,lastWarnText='';
 let needFit=true,dim={w:320,h:240},ctr={x:0,y:0},panX=0,panY=0;
 const DEL=MADB.DEL_ACTIONS;
 let S=MADB.emptyModel(),sel=null,zoom=1,tab='sql';
@@ -949,6 +953,21 @@ function quick(q,t){
 }
 $('#bEnum').onclick=()=>enumModal('Novo enum',(n,vals)=>{S.enums.push({id:MADB.newId(S,'enum'),schema:'public',name:n,values:vals});sel=MODEL;renderAll()});
 
+/* barra de avisos: copiar, baixar .txt, fechar */
+$('#warns').addEventListener('click',async e=>{
+  const a=e.target.dataset.w;if(!a)return;
+  if(a==='close'){warnsHidden=true;$('#warns').classList.add('closed')}
+  else if(a==='txt'){
+    const u=URL.createObjectURL(new Blob([lastWarnText+'\n'],{type:'text/plain;charset=utf-8'}));
+    const x=document.createElement('a');x.href=u;x.download=(cur()?cur().name.replace(/[^w.-]+/g,'_'):'modelo')+'_avisos.txt';
+    document.body.appendChild(x);x.click();x.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);
+  }
+  else if(a==='copy'){
+    try{await navigator.clipboard.writeText(lastWarnText)}catch(_){const t=document.createElement('textarea');t.value=lastWarnText;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove()}
+    e.target.textContent='Copiado ✓';setTimeout(()=>e.target.textContent='Copiar',1400);
+  }
+});
+
 /* ---------- tooltip do enum (passar o mouse sobre a coluna) ---------- */
 const etip=document.createElement('div');etip.id='etip';etip.className='etip';etip.hidden=true;document.body.appendChild(etip);
 function placeEtip(x,y){etip.style.left=Math.max(8,Math.min(x+16,innerWidth-300))+'px';etip.style.top=Math.max(8,Math.min(y+16,innerHeight-etip.offsetHeight-8))+'px'}
@@ -1254,7 +1273,13 @@ function renderOut(skipDiagram){
   if(document.activeElement!==ta||tab!=='json')ta.value=gen();
   const v=MADB.validate(S);
   const notice=$('#warns').dataset.notice;
-  $('#warns').innerHTML=(notice?'ℹ '+esc(notice)+'<br>':'')+v.errors.map(x=>'<span class="er">✖ '+esc(x.message)+'</span>').join('<br>')+(v.errors.length&&v.warnings.length?'<br>':'')+v.warnings.map(x=>'⚠ '+esc(x.message)).join('<br>');
+  const lines=[...(notice?['ℹ '+notice]:[]),...v.errors.map(x=>'✖ '+x.message),...v.warnings.map(x=>'⚠ '+x.message)];
+  const key=lines.join('\n');
+  if(key!==warnKey){warnKey=key;warnsHidden=false}
+  lastWarnText=key;
+  const wEl=$('#warns');
+  wEl.classList.toggle('closed',warnsHidden||!lines.length);
+  wEl.innerHTML=lines.length?'<div class="wbar"><span class="wt">'+lines.length+' aviso(s)</span><span class="spacer"></span><button class="sm ghost" data-w="copy">Copiar</button><button class="sm ghost" data-w="txt">Baixar .txt</button><button class="sm ghost" data-w="close">Fechar</button></div>'+lines.map(l=>'<div class="'+(l[0]==='✖'?'er':'')+'">'+esc(l)+'</div>').join(''):'';
   saveDB();renderWs();renderStatus();
 }
 function renderAll(){renderEditor();renderOut()}
