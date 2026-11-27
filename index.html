@@ -231,6 +231,7 @@ header{padding:8px 14px;gap:14px}
 </div>
 <div class="statusbar" id="status">
   <span id="origin"></span>
+  <button class="sm ghost" id="bWarn" hidden data-tip="Avisos desta arquitetura (clique para ver ou ocultar)">⚠ 0</button>
   <span class="spacer"></span>
   <button class="sm ghost" id="bOpen" data-tip="Abrir um arquivo .json ou .sql (ou arraste o arquivo para a página)">Abrir arquivo</button>
   <button class="sm ghost" id="bLink" data-tip="Vincular a um arquivo .json para sincronizar" hidden>Vincular</button>
@@ -302,7 +303,8 @@ header{padding:8px 14px;gap:14px}
 <script>
 'use strict';
 const W=230,HH=34,RH=22,HEAD=44,COLGAP=70,TGAP=40;
-let warnKey='',warnsHidden=false,lastWarnText='';
+let warnKey='',warnsHidden=true,lastWarnText='';
+const WARN_SEEN={};let WARN_FORCE=false;
 let needFit=true,dim={w:320,h:240},ctr={x:0,y:0},panX=0,panY=0;
 const DEL=MADB.DEL_ACTIONS;
 let S=MADB.emptyModel(),sel=null,zoom=1,tab='sql';
@@ -417,8 +419,7 @@ document.addEventListener('keydown',e=>{
     confirmDel(delLabel('delT'),()=>act('delT'));
     return;
   }
-  if(mod&&!e.shiftKey&&k==='c'&&sel!==null&&sel!==MODEL&&tOf(sel)){e.preventDefault();copiarTabela(tOf(sel))}
-  else if(mod&&!e.shiftKey&&k==='v'&&CLIP){e.preventDefault();colarTabela()}
+  if(mod&&!e.shiftKey&&k==='c'&&sel!==null&&sel!==MODEL&&tOf(sel)){copiarTabela(tOf(sel))}
   else if(mod&&!e.shiftKey&&k==='z'){e.preventDefault();undo()}
   else if(mod&&(k==='y'||(e.shiftKey&&k==='z'))){e.preventDefault();redo()}
 });
@@ -964,6 +965,7 @@ function quick(q,t){
 $('#bEnum').onclick=()=>enumModal('Novo enum',(n,vals)=>{S.enums.push({id:MADB.newId(S,'enum'),schema:'public',name:n,values:vals});sel=MODEL;renderAll()});
 
 /* barra de avisos: copiar, baixar .txt, fechar */
+$('#bWarn').onclick=()=>{warnsHidden=!warnsHidden;renderOut(true)};
 $('#warns').addEventListener('click',async e=>{
   const a=e.target.dataset.w;if(!a)return;
   if(a==='close'){warnsHidden=true;$('#warns').classList.add('closed')}
@@ -997,7 +999,26 @@ window.addEventListener('scroll',()=>{etip.hidden=true},true);
 /* ---------- copiar e colar tabela (Ctrl+C / Ctrl+V) ---------- */
 let CLIP=null;
 const cloneJ=x=>JSON.parse(JSON.stringify(x));
+let pendingTableCopy=false;
+const CLIP_TAG='MADB-TABELA:';
+const campoEditavel=el=>!!el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable);
+document.addEventListener('copy',e=>{
+  if(!pendingTableCopy||!CLIP||campoEditavel(e.target))return;
+  pendingTableCopy=false;
+  e.clipboardData.setData('text/plain',CLIP_TAG+JSON.stringify(CLIP));
+  e.preventDefault();
+});
+document.addEventListener('paste',e=>{
+  if(campoEditavel(e.target))return;
+  const txt=(e.clipboardData&&e.clipboardData.getData('text/plain'))||'';
+  if(!txt.startsWith(CLIP_TAG))return;
+  e.preventDefault();
+  let obj=null;try{obj=JSON.parse(txt.slice(CLIP_TAG.length))}catch(_){}
+  if(!obj||!obj.cols){setNotice('Não consegui colar: a área de transferência não tem uma tabela válida do MADB.');renderOut(true);return}
+  CLIP=obj;colarTabela();
+});
 function copiarTabela(t){
+  pendingTableCopy=true;setTimeout(()=>{pendingTableCopy=false},0);
   const ext={};
   const note=(tid,cid)=>{
     if(tid===t.id)return;
@@ -1012,7 +1033,7 @@ function copiarTabela(t){
   const usadas=new Set((t.triggers||[]).map(g=>g.function));
   const funcs=(S.functions||[]).filter(f=>usadas.has(f.schema+'.'+f.name)).map(cloneJ);
   CLIP=cloneJ(t);CLIP.ext=ext;CLIP.enums=enums;CLIP.funcs=funcs;
-  setNotice('Tabela "'+t.name+'" copiada. Vá a outra arquitetura (ou fique aqui) e use Ctrl+V.');renderOut(true);
+  setNotice('Tabela "'+t.name+'" copiada. Use Ctrl+V aqui ou em outra guia/arquitetura.');renderOut(true);
 }
 /* posição livre mais perto da tabela de origem: direita, abaixo, esquerda, acima e depois anéis maiores */
 function acharVaga(src,h){
@@ -1407,8 +1428,13 @@ function renderOut(skipDiagram){
   const notice=$('#warns').dataset.notice;
   const lines=[...(notice?['ℹ '+notice]:[]),...v.errors.map(x=>'✖ '+x.message),...v.warnings.map(x=>'⚠ '+x.message)];
   const key=lines.join('\n');
-  if(key!==warnKey){warnKey=key;warnsHidden=false}
+  const bad=lines.filter(l=>l[0]==='✖'||l[0]==='⚠');
+  const wid=cur()?cur().id:'';const seen=WARN_SEEN[wid];
+  if(!seen||WARN_FORCE){WARN_SEEN[wid]=new Set(bad);if(WARN_FORCE){warnsHidden=false;WARN_FORCE=false}}
+  else{if(bad.some(l=>!seen.has(l)))warnsHidden=false;bad.forEach(l=>seen.add(l))}
+  warnKey=key;
   lastWarnText=key;
+  const wb=$('#bWarn');wb.hidden=!bad.length;wb.textContent='⚠ '+bad.length;wb.classList.toggle('on',!warnsHidden&&bad.length>0);
   const wEl=$('#warns');
   wEl.classList.toggle('closed',warnsHidden||!lines.length);
   wEl.innerHTML=lines.length?'<div class="wbar"><span class="wt">'+lines.length+' aviso(s)</span><span class="spacer"></span><button class="sm ghost" data-w="copy">Copiar</button><button class="sm ghost" data-w="txt">Baixar .txt</button><button class="sm ghost" data-w="close">Fechar</button></div>'+lines.map(l=>'<div class="'+(l[0]==='✖'?'er':'')+'">'+esc(l)+'</div>').join(''):'';
@@ -1447,6 +1473,7 @@ function showImport(r,origem){
   $('#impX').onclick=()=>box.hidden=true;
 }
 function importText(text,origem,after){
+  WARN_FORCE=true;
   let r;
   if(MADB.looksLikeDDL(text)){
     const d=MADB.fromDDL(text);
@@ -1507,7 +1534,7 @@ function renderWs(){
   $('#wsSel').innerHTML=DB.ws.map(w=>`<option value="${w.id}" ${w.id===DB.active?'selected':''}>${esc(w.name)} (${w.model.tables.length} tab.)</option>`).join('');
 }
 function switchTo(id){
-  saveDB();clearHist();
+  saveDB();clearHist();warnsHidden=true;
   DB.active=id;S=cur().model;sel=null;needFit=true;
   $('#canvas').scrollTo(0,0);
   loadLink();
