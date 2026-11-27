@@ -841,6 +841,318 @@
     });
     return out;
   }
+  /* ---------------- DDL (SQL do PostgreSQL) -> modelo ---------------- */
+  var DDL_CONS_RE = /^(CONSTRAINT\b|PRIMARY\s+KEY\b|UNIQUE\b|FOREIGN\s+KEY\b|CHECK\s*\(|EXCLUDE\b)/i;
+  var DDL_KW_RE = /^(NOT\s+NULL|NULL|PRIMARY\s+KEY|UNIQUE|REFERENCES|CHECK|GENERATED|CONSTRAINT|COLLATE|DEFAULT)\b/i;
+
+  /* remove comentários -- e /* *\/ fora de aspas; aspas simples, duplas e $$...$$ são preservadas */
+  function ddlStrip(text) {
+    var s = String(text), out = '', i = 0, n = s.length, q = null;
+    while (i < n) {
+      var ch = s[i];
+      if (q) {
+        if (q.length === 1 && ch === q && s[i + 1] === q) { out += ch + ch; i += 2; continue; }
+        if (s.substr(i, q.length) === q) { out += q; i += q.length; q = null; continue; }
+        out += ch; i++; continue;
+      }
+      if (ch === "'" || ch === '"') { q = ch; out += ch; i++; continue; }
+      if (ch === '$') { var dm = /^\$([A-Za-z_]\w*)?\$/.exec(s.slice(i, i + 80)); if (dm) { q = dm[0]; out += q; i += q.length; continue; } }
+      if (ch === '-' && s[i + 1] === '-') { while (i < n && s[i] !== '\n') i++; continue; }
+      if (ch === '/' && s[i + 1] === '*') { i += 2; while (i < n && !(s[i] === '*' && s[i + 1] === '/')) i++; i += 2; out += ' '; continue; }
+      out += ch; i++;
+    }
+    return out;
+  }
+  /* máscara: 'q' dentro de aspas/$$, 'c' no código */
+  function ddlMask(s) {
+    var m = '', i = 0, n = s.length, q = null;
+    while (i < n) {
+      var ch = s[i];
+      if (q) {
+        if (q.length === 1 && ch === q && s[i + 1] === q) { m += 'qq'; i += 2; continue; }
+        if (s.substr(i, q.length) === q) { m += 'q'.repeat(q.length); i += q.length; q = null; continue; }
+        m += 'q'; i++; continue;
+      }
+      if (ch === "'" || ch === '"') { q = ch; m += 'q'; i++; continue; }
+      if (ch === '$') { var dm = /^\$([A-Za-z_]\w*)?\$/.exec(s.slice(i, i + 80)); if (dm) { q = dm[0]; m += 'q'.repeat(q.length); i += q.length; continue; } }
+      m += 'c'; i++;
+    }
+    return m;
+  }
+  /* divide por sep fora de parênteses e aspas */
+  function ddlSplit(s, sep) {
+    var m = ddlMask(s), out = [], cur = '', d = 0;
+    for (var i = 0; i < s.length; i++) {
+      var ch = s[i], code = m[i] === 'c';
+      if (code && ch === '(') d++;
+      else if (code && ch === ')') d--;
+      if (code && ch === sep && d === 0) { if (cur.trim()) out.push(cur.trim()); cur = ''; continue; }
+      cur += ch;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  }
+  /* "(...)" no início de s: devolve o conteúdo e o resto */
+  function takeParen(s) {
+    var t = String(s).replace(/^\s+/, '');
+    if (t[0] !== '(') return null;
+    var m = ddlMask(t), d = 0;
+    for (var i = 0; i < t.length; i++) {
+      if (m[i] !== 'c') continue;
+      if (t[i] === '(') d++;
+      else if (t[i] === ')') { d--; if (d === 0) return { inner: t.slice(1, i), rest: t.slice(i + 1) }; }
+    }
+    return null;
+  }
+  function ddlUnq(x) { return String(x).trim().replace(/^"((?:[^"]|"")*)"$/, function (_, v) { return v.replace(/""/g, '"'); }); }
+  function ddlName(x) {
+    var p = ddlSplit(String(x).trim(), '.');
+    return p.length >= 2 ? { schema: ddlUnq(p[p.length - 2]), name: ddlUnq(p[p.length - 1]) } : { schema: 'public', name: ddlUnq(p[0] || '') };
+  }
+  function ddlLiteral(x) {
+    var t = String(x).trim();
+    if (/^NULL$/i.test(t)) return null;
+    var m = /^'([\s\S]*)'$/.exec(t);
+    return m ? m[1].replace(/''/g, "'") : t;
+  }
+  function ddlColNames(inner) { return ddlSplit(inner, ',').map(ddlUnq); }
+  /* posição do primeiro termo de palavra-chave no nível 0 */
+  function ddlUntilKw(r) {
+    var m = ddlMask(r), d = 0;
+    for (var i = 0; i < r.length; i++) {
+      if (m[i] !== 'c') continue;
+      if (r[i] === '(') d++; else if (r[i] === ')') d--;
+      else if (d === 0 && (i === 0 || !/\w/.test(r[i - 1])) && DDL_KW_RE.test(r.slice(i))) return i;
+    }
+    return r.length;
+  }
+  function ddlDel(x) {
+    var v = String(x).toUpperCase().replace(/\s+/g, ' ');
+    return DEL_ACTIONS.indexOf(v) >= 0 ? v : 'NO ACTION';
+  }
+  /* uma definição de coluna: nome, tipo e atributos */
+  function ddlColumn(def) {
+    var m = /^("(?:[^"]|"")+"|\S+)\s*([\s\S]*)$/.exec(def);
+    if (!m) return null;
+    var c = { name: ddlUnq(m[1]), type: '', pk: false, nn: false, uq: false, def: '', ref_: null, nnd: false, identity: null, generated: null, check: null, rest: '' };
+    var r = m[2], k = ddlUntilKw(r);
+    c.type = r.slice(0, k).trim(); r = r.slice(k);
+    var x;
+    while (r.trim()) {
+      var lead = r.length - r.replace(/^\s+/, '').length, t = r.slice(lead), used = 0;
+      if ((x = /^NOT\s+NULL\b/i.exec(t))) { c.nn = true; used = x[0].length; }
+      else if ((x = /^NULL\b/i.exec(t))) { used = x[0].length; }
+      else if ((x = /^PRIMARY\s+KEY\b/i.exec(t))) { c.pk = true; c.nn = true; used = x[0].length; }
+      else if ((x = /^UNIQUE\b(\s+NULLS\s+NOT\s+DISTINCT)?/i.exec(t))) { c.uq = true; c.nnd = !!x[1]; used = x[0].length; }
+      else if ((x = /^DEFAULT\s+/i.exec(t))) {
+        var rd = t.slice(x[0].length), e = ddlUntilKw(rd);
+        c.def = rd.slice(0, e).trim(); used = x[0].length + e;
+      }
+      else if ((x = /^REFERENCES\s+/i.exec(t))) {
+        var rr = t.slice(x[0].length), pn = rr.indexOf('('), tgt = pn < 0 ? rr.trim().split(/\s+/)[0] : rr.slice(0, pn).trim();
+        var tc = pn < 0 ? null : takeParen(rr.slice(pn));
+        var rest2 = tc ? tc.rest : rr.slice(tgt.length);
+        var dm = /^\s*ON\s+DELETE\s+(NO\s+ACTION|CASCADE|SET\s+NULL|SET\s+DEFAULT|RESTRICT)/i.exec(rest2);
+        c.ref_ = { tgt: ddlName(tgt), cols: tc ? ddlColNames(tc.inner) : [], del: dm ? ddlDel(dm[1]) : 'NO ACTION' };
+        used = t.length - rest2.length + (dm ? dm[0].length : 0);
+      }
+      else if ((x = /^CHECK\s*/i.exec(t))) { var ck = takeParen(t.slice(x[0].length)); if (!ck) break; c.check = ck.inner.trim(); used = t.length - ck.rest.length; }
+      else if ((x = /^GENERATED\s+(ALWAYS|BY\s+DEFAULT)\s+AS\s+IDENTITY(\s*\([^)]*\))?/i.exec(t))) { c.identity = x[1].toUpperCase().replace(/\s+/g, ' '); used = x[0].length; }
+      else if ((x = /^GENERATED\s+ALWAYS\s+AS\s*/i.exec(t))) {
+        var gp = takeParen(t.slice(x[0].length)); if (!gp) break; c.generated = gp.inner.trim();
+        var sm = /^\s*STORED\b/i.exec(gp.rest); used = t.length - gp.rest.length + (sm ? sm[0].length : 0);
+      }
+      else if ((x = /^CONSTRAINT\s+("(?:[^"]|"")+"|\S+)/i.exec(t))) { used = x[0].length; }
+      else if ((x = /^COLLATE\s+\S+/i.exec(t))) { used = x[0].length; }
+      else { c.rest = t.trim(); break; }
+      r = t.slice(used);
+    }
+    return c;
+  }
+  /* restrição de tabela (CREATE TABLE ou ALTER TABLE ... ADD) */
+  function ddlConstraint(item, warn) {
+    var cname = null, m = /^CONSTRAINT\s+("(?:[^"]|"")+"|\S+)\s+([\s\S]*)$/i.exec(item);
+    if (m) { cname = ddlUnq(m[1]); item = m[2].trim(); }
+    item = item.replace(/\s+NOT\s+VALID\s*$/i, '');
+    var x, tb;
+    if ((x = /^PRIMARY\s+KEY\s*/i.exec(item))) { tb = takeParen(item.slice(x[0].length)); return tb ? { kind: 'pk', cols: ddlColNames(tb.inner) } : warn('PRIMARY KEY não entendida: ' + item); }
+    if ((x = /^UNIQUE\s*(NULLS\s+NOT\s+DISTINCT\s*)?/i.exec(item))) { tb = takeParen(item.slice(x[0].length)); return tb ? { kind: 'unique', name: cname, cols: ddlColNames(tb.inner), nnd: !!x[1] } : warn('UNIQUE não entendida: ' + item); }
+    if ((x = /^FOREIGN\s+KEY\s*/i.exec(item))) {
+      var f = takeParen(item.slice(x[0].length)); if (!f) return warn('FOREIGN KEY não entendida: ' + item);
+      var rm = /^\s*REFERENCES\s+/i.exec(f.rest); if (!rm) return warn('FOREIGN KEY sem REFERENCES: ' + item);
+      var r2 = f.rest.slice(rm[0].length), pn = r2.indexOf('('), tgt = r2.slice(0, pn), tc = takeParen(r2.slice(pn));
+      if (!tc) return warn('REFERENCES não entendida: ' + item);
+      var dm = /ON\s+DELETE\s+(NO\s+ACTION|CASCADE|SET\s+NULL|SET\s+DEFAULT|RESTRICT)/i.exec(tc.rest);
+      return { kind: 'fk', name: cname, cols: ddlColNames(f.inner), ref: { tgt: ddlName(tgt), cols: ddlColNames(tc.inner) }, del: dm ? ddlDel(dm[1]) : 'NO ACTION' };
+    }
+    if ((x = /^CHECK\s*/i.exec(item))) { tb = takeParen(item.slice(x[0].length)); return tb ? { kind: 'check', name: cname, expr: tb.inner.trim() } : warn('CHECK não entendida: ' + item); }
+    return warn('restrição não suportada: ' + item.slice(0, 90));
+  }
+
+  function fromDDL(text) {
+    var notes = [], warnings = [], ignored = 0;
+    function warn(msg) { warnings.push({ path: '(SQL)', message: msg }); return null; }
+    var tabs = [], enums = [], schemas = [], idxs = [], parts = [], coms = [], trgs = [], funcs = [];
+    function findTab(nm) { return tabs.find(function (t) { return t.schema === nm.schema && t.name === nm.name; }) || null; }
+    var stmts = ddlSplit(ddlStrip(String(text)), ';');
+    stmts.forEach(function (raw) {
+      var s = raw.replace(/^\s+/, ''), x, tb;
+      if ((x = /^CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s;]+)/i.exec(s))) { schemas.push(ddlUnq(x[1])); return; }
+      if ((x = /^CREATE\s+TYPE\s+(\S+)\s+AS\s+ENUM\s*/i.exec(s))) {
+        tb = takeParen(s.slice(x[0].length)); if (!tb) return void warn('ENUM não entendido: ' + s.slice(0, 80));
+        var nm = ddlName(x[1]); enums.push({ schema: nm.schema, name: nm.name, values: ddlSplit(tb.inner, ',').map(ddlLiteral) }); return;
+      }
+      if ((x = /^CREATE\s+(?:UNLOGGED\s+|TEMP(?:ORARY)?\s+|GLOBAL\s+|LOCAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\S+?)\s*(?=\(|PARTITION\s+OF\b)/i.exec(s))) {
+        var tn = ddlName(x[1]), rest = s.slice(x[0].length);
+        var pm = /^PARTITION\s+OF\s+(\S+)\s+([\s\S]*)$/i.exec(rest.replace(/^\s+/, ''));
+        if (pm) { parts.push({ parent: ddlName(pm[1]), name: tn.name, bound: pm[2].replace(/^FOR\s+VALUES\s+/i, '').trim() }); return; }
+        tb = takeParen(rest); if (!tb) return void warn('CREATE TABLE não entendido: ' + s.slice(0, 80));
+        var t = { schema: tn.schema, name: tn.name, cols: [], cons: [], part: null, comment: null };
+        tabs.push(t);
+        var items = ddlSplit(tb.inner, ',');
+        items.forEach(function (it) {
+          if (DDL_CONS_RE.test(it)) return;
+          var c = ddlColumn(it); if (c) t.cols.push(c);
+        });
+        items.forEach(function (it) {
+          if (!DDL_CONS_RE.test(it)) return;
+          var k = ddlConstraint(it, warn); if (k) t.cons.push(k);
+        });
+        var pb = /PARTITION\s+BY\s+(RANGE|LIST|HASH)\s*/i.exec(tb.rest);
+        if (pb) { var pp = takeParen(tb.rest.slice(pb.index + pb[0].length)); if (pp) t.part = { by: pb[1].toUpperCase(), cols: ddlColNames(pp.inner) }; }
+        return;
+      }
+      if ((x = /^CREATE\s+(UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(\S+)\s+ON\s+(?:ONLY\s+)?(\S+?)\s*(?:USING\s+(\w+)\s*)?(?=\()/i.exec(s))) {
+        var ib = takeParen(s.slice(x[0].length)); if (!ib) return void warn('CREATE INDEX não entendido: ' + s.slice(0, 80));
+        var wm = /^\s*WHERE\s+([\s\S]*)$/i.exec(ib.rest);
+        idxs.push({ name: ddlUnq(x[2]), unique: !!x[1], tbl: ddlName(x[3]), method: x[4] ? x[4].toLowerCase() : null, items: ddlSplit(ib.inner, ','), where: wm ? wm[1].trim() : null });
+        return;
+      }
+      if ((x = /^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(\S+)\s+ADD\s+([\s\S]*)$/i.exec(s))) {
+        var at = findTab(ddlName(x[1])), add = x[2].trim();
+        if (!at) return void warn('ALTER TABLE em tabela não encontrada: ' + x[1]);
+        if (/^COLUMN\s+/i.test(add)) { var ac = ddlColumn(add.replace(/^COLUMN\s+/i, '')); if (ac) at.cols.push(ac); return; }
+        if (DDL_CONS_RE.test(add)) { var kk = ddlConstraint(add, warn); if (kk) at.cons.push(kk); return; }
+        return void warn('ALTER TABLE não suportado: ' + s.slice(0, 90));
+      }
+      if ((x = /^COMMENT\s+ON\s+TABLE\s+(\S+)\s+IS\s+([\s\S]+)$/i.exec(s))) { coms.push({ tbl: ddlName(x[1]), col: null, text: ddlLiteral(x[2]) }); return; }
+      if ((x = /^COMMENT\s+ON\s+COLUMN\s+(\S+)\s+IS\s+([\s\S]+)$/i.exec(s))) {
+        var cp = ddlSplit(x[1], '.'), cn = ddlUnq(cp[cp.length - 1]);
+        coms.push({ tbl: ddlName(cp.slice(0, -1).join('.')), col: cn, text: ddlLiteral(x[2]) }); return;
+      }
+      if ((x = /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\s+(\S+)\s+(BEFORE|AFTER|INSTEAD\s+OF)\s+([\s\S]+?)\s+ON\s+(\S+)\s+(?:FOR\s+(?:EACH\s+)?(ROW|STATEMENT)\s*)?(?:WHEN\s*\(([\s\S]*?)\)\s*)?EXECUTE\s+(?:FUNCTION|PROCEDURE)\s+(\S+?)\s*\(/i.exec(s))) {
+        trgs.push({ name: ddlUnq(x[1]), timing: x[2].toUpperCase().replace(/\s+/g, ' '), events: x[3].toUpperCase().split(/\s+OR\s+/).map(function (e) { return e.trim(); }),
+          tbl: ddlName(x[4]), level: x[5] ? x[5].toUpperCase() : 'STATEMENT', when: x[6] ? x[6].trim() : null, fn: ddlName(x[7]) });
+        return;
+      }
+      if ((x = /^CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(\S+?)\s*\(/i.exec(s))) {
+        var fn = ddlName(x[1]); funcs.push({ schema: fn.schema, name: fn.name, sql: s.replace(/^CREATE\s+(?:OR\s+REPLACE\s+)?/i, 'CREATE OR REPLACE ').trim() }); return;
+      }
+      if (/^(SET\b|SELECT\b|GRANT\b|REVOKE\b|CREATE\s+EXTENSION|CREATE\s+SEQUENCE|ALTER\s+SEQUENCE|ALTER\s+(TABLE|SCHEMA|TYPE|SEQUENCE)\b[\s\S]*\bOWNER\s+TO|COMMENT\s+ON\s+(SCHEMA|EXTENSION|SEQUENCE)|SELECT\s+pg_catalog)/i.test(s)) { ignored++; return; }
+      if (s.trim()) warn('Não importado (sem suporte ainda): ' + s.replace(/\s+/g, ' ').slice(0, 90) + (s.length > 90 ? '…' : ''));
+    });
+
+    /* montagem com ids do modelo */
+    var model = { version: FORMAT_VERSION, options: {}, enums: [], tables: [] };
+    if (funcs.length) model.functions = funcs.map(function (f, i) { return { id: 'f' + (i + 1), schema: f.schema, name: f.name, sql: f.sql }; });
+    if (schemas.length) model.schemas = schemas.map(function (n) { return { name: n }; });
+    var ti = 0;
+    tabs.forEach(function (t) { t.id = 't' + (++ti); t.out = { id: t.id, name: t.name, schema: t.schema, cols: [] }; });
+    var ei = 0;
+    enums.forEach(function (e) { model.enums.push({ id: 'e' + (++ei), schema: e.schema, name: e.name, values: e.values }); });
+    tabs.forEach(function (t) {
+      t.cols.forEach(function (c, j) { c.id = t.id + 'c' + (j + 1); t.out.cols.push({ id: c.id, name: c.name, type: c.type || 'text', pk: c.pk, nn: c.nn || c.pk, uq: c.uq, def: c.def, ref: null, del: 'NO ACTION' }); });
+    });
+    function colOf(t, name) { return t.cols.find(function (c) { return c.name === name; }) || null; }
+    function tabOf(ref) { var t = findTab(ref); if (!t) warn('tabela de destino não encontrada: ' + ref.schema + '.' + ref.name); return t; }
+    tabs.forEach(function (t) {
+      var ok = t.out;
+      t.cols.forEach(function (c, j) {
+        if (c.ref_) {
+          var rt = tabOf(c.ref_.tgt), rc = rt && c.ref_.cols.length === 1 ? colOf(rt, c.ref_.cols[0]) : null;
+          if (rt && rc) { ok.cols[j].ref = { t: rt.id, c: rc.id }; ok.cols[j].del = c.ref_.del; }
+          else if (rt) warn('REFERENCES sem coluna única em ' + t.name + '.' + c.name + ' (chave composta vira restrição FK)');
+        }
+        if (c.identity) ok.cols[j].identity = c.identity;
+        if (c.generated) ok.cols[j].generated = c.generated;
+      });
+      var cons = [];
+      t.cols.forEach(function (c) { if (c.check) cons.push({ kind: 'check', name: null, expr: c.check }); });
+      t.cons.forEach(function (k) {
+        if (k.kind === 'pk') { k.cols.forEach(function (n) { var c = colOf(t, n); if (c) { var oc = ok.cols[t.cols.indexOf(c)]; oc.pk = true; oc.nn = true; } }); return; }
+        if (k.kind === 'unique' && k.cols.length === 1) { var uc = colOf(t, k.cols[0]); if (uc) { ok.cols[t.cols.indexOf(uc)].uq = true; return; } }
+        cons.push(k);
+      });
+      var outCons = [], ki = 0;
+      cons.forEach(function (k) {
+        var id = t.id + 'k' + (++ki), cols = [];
+        if (k.kind === 'check') return void outCons.push({ id: id, name: k.name || (t.name + '_check' + ki), kind: 'check', expr: k.expr });
+        var ids = (k.cols || []).map(function (n) { var c = colOf(t, n); return c ? c.id : null; });
+        if (ids.indexOf(null) >= 0) return void warn('restrição com coluna inexistente em ' + t.name);
+        if (k.kind === 'unique') { var u = { id: id, name: k.name || (t.name + '_' + k.cols.join('_') + '_key'), kind: 'unique', cols: ids }; if (k.nnd) u.nullsNotDistinct = true; return void outCons.push(u); }
+        if (k.kind === 'fk') {
+          var rt2 = tabOf(k.ref.tgt); if (!rt2) return;
+          var rids = k.ref.cols.map(function (n) { var c = colOf(rt2, n); return c ? c.id : null; });
+          if (rids.indexOf(null) >= 0) return void warn('FK com coluna de destino inexistente em ' + t.name);
+          if (ids.length !== rids.length) return void warn('FK em ' + t.name + ' tem ' + ids.length + ' coluna(s) mas referencia ' + rids.length + ' coluna(s)');
+          if (ids.length === 1) { var fc = ok.cols[t.cols.indexOf(colOf(t, k.cols[0]))]; fc.ref = { t: rt2.id, c: rids[0] }; fc.del = k.del; return; }
+          return void outCons.push({ id: id, name: k.name || (t.name + '_' + k.cols.join('_') + '_fkey'), kind: 'fk', cols: ids, ref: { t: rt2.id, cols: rids }, del: k.del });
+        }
+      });
+      if (outCons.length) ok.constraints = outCons;
+      if (t.part) {
+        var pcols = t.part.cols.map(function (n) { var c = colOf(t, n); return c ? c.id : null; }).filter(Boolean);
+        if (pcols.length) ok.partition = { by: t.part.by, cols: pcols };
+      }
+      if (t.comment) ok.comment = t.comment;
+      model.tables.push(ok);
+    });
+    /* índices */
+    idxs.forEach(function (x) {
+      var t = findTab(x.tbl);
+      if (!t) return void warn('índice ' + x.name + ': tabela não encontrada');
+      var list = [];
+      x.items.forEach(function (it) {
+        var mm = /^(.+?)(?:\s+(ASC|DESC))?(?:\s+NULLS\s+(FIRST|LAST))?$/i.exec(it);
+        if (/^\(/.test(it)) { list.push({ expr: it.replace(/^\((.*)\)$/, '$1') }); return; }
+        var cc = mm && colOf(t, ddlUnq(mm[1]));
+        if (!cc) { list.push({ expr: it }); return; }
+        var e = { c: cc.id }; if (mm[2]) e.order = mm[2].toUpperCase(); if (mm[3]) e.nulls = mm[3].toUpperCase(); list.push(e);
+      });
+      var mo = model.tables.find(function (o) { return o.id === t.id; });
+      mo.indexes = mo.indexes || [];
+      var ii = mo.indexes.length + 1, idx = { id: t.id + 'i' + ii, name: x.name, cols: list };
+      if (x.unique) idx.unique = true; if (x.method && x.method !== 'btree') idx.method = x.method; if (x.where) idx.where = x.where;
+      mo.indexes.push(idx);
+    });
+    /* partições filhas */
+    parts.forEach(function (p) {
+      var pt = findTab(p.parent), mo = pt && model.tables.find(function (o) { return o.id === pt.id; });
+      if (!mo || !mo.partition) return void warn('PARTITION OF ' + p.name + ': tabela mãe não é particionada');
+      mo.partitions = mo.partitions || [];
+      mo.partitions.push({ id: mo.id + 'p' + (mo.partitions.length + 1), name: p.name, bound: p.bound });
+    });
+    /* comentários */
+    coms.forEach(function (c) {
+      var t = findTab(c.tbl), mo = t && model.tables.find(function (o) { return o.id === t.id; });
+      if (!mo) return;
+      if (!c.col) { if (c.text) mo.comment = c.text; return; }
+      var col = mo.cols.find(function (oc) { return oc.name === c.col; });
+      if (col && c.text) col.comment = c.text;
+    });
+    /* gatilhos */
+    trgs.forEach(function (g) {
+      var t = findTab(g.tbl), mo = t && model.tables.find(function (o) { return o.id === t.id; });
+      if (!mo) return void warn('trigger ' + g.name + ': tabela não encontrada');
+      mo.triggers = mo.triggers || [];
+      var ev = g.events.filter(function (e) { return TRIGGER_EVENTS.indexOf(e) >= 0; });
+      mo.triggers.push({ id: mo.id + 'g' + (mo.triggers.length + 1), name: g.name, timing: g.timing, events: ev.length ? ev : ['UPDATE'], level: g.level, function: g.fn.schema + '.' + g.fn.name, when: g.when || undefined });
+    });
+    if (ignored) notes.push({ path: '(SQL)', message: ignored + ' comando(s) de configuração ignorado(s) (SET, GRANT, OWNER, SEQUENCE…).' });
+    notes.unshift({ path: '(SQL)', message: 'DDL convertido: ' + model.tables.length + ' tabela(s), ' + model.enums.length + ' enum(s), ' + idxs.length + ' índice(s).' });
+    return { json: model, warnings: warnings, notes: notes };
+  }
+  function looksLikeDDL(text) { return !/^\s*[\[{]/.test(String(text)) && /\bCREATE\s+(TABLE|TYPE|SCHEMA|INDEX|UNIQUE\s+INDEX|TRIGGER)\b|\bALTER\s+TABLE\b/i.test(String(text)); }
   function emptyModel() { return { version: FORMAT_VERSION, options: {}, schemas: [], enums: [], functions: [], tables: [] }; }
 
   return {
@@ -848,6 +1160,7 @@
     parseJSON: parseJSON, normalize: normalize, validate: validate, load: load, loadObject: loadObject,
     serialize: serialize, exportJSON: exportJSON, toSQL: toSQL, toMermaid: toMermaid, autoLayout: autoLayout, tableHeight: tableHeight,
     newId: newId, findTable: findTable, findCol: findCol, tableById: tableById, colById: colById, fkList: fkList, summary: summary, emptyModel: emptyModel,
+    fromDDL: fromDDL, looksLikeDDL: looksLikeDDL,
     stableStringify: stableStringify, clone: clone, baseType: baseType, q: q, qn: qn, tname: tname, hasUniqueOn: hasUniqueOn, prune: prune
   };
 });

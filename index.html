@@ -230,14 +230,14 @@ header{padding:8px 14px;gap:14px}
 <div class="statusbar" id="status">
   <span id="origin"></span>
   <span class="spacer"></span>
-  <button class="sm ghost" id="bOpen" data-tip="Abrir um arquivo .json (ou arraste o arquivo para a página)">Abrir arquivo</button>
+  <button class="sm ghost" id="bOpen" data-tip="Abrir um arquivo .json ou .sql (ou arraste o arquivo para a página)">Abrir arquivo</button>
   <button class="sm ghost" id="bLink" data-tip="Vincular a um arquivo .json para sincronizar" hidden>Vincular</button>
   <button class="sm ghost" id="bReload" data-tip="Ler de novo o arquivo vinculado" hidden>Recarregar</button>
   <button class="sm ghost" id="bSave" data-tip="Gravar esta arquitetura no arquivo vinculado" hidden>Gravar</button>
   <label id="autoW" hidden data-tip="Acompanhar o arquivo vinculado automaticamente"><input type="checkbox" id="optAuto"> Auto</label>
-  <input type="file" id="fileIn" accept=".json,application/json" hidden>
+  <input type="file" id="fileIn" accept=".json,.sql,application/json,text/plain" hidden>
 </div>
-<div class="dropov" id="dropov" hidden>Solte o arquivo .json para importar</div>
+<div class="dropov" id="dropov" hidden>Solte o arquivo .json ou .sql para importar</div>
 <div class="pop" id="pop" hidden></div>
 <div class="pop" id="relp" hidden></div>
 <div class="pop userp" id="salap" hidden></div>
@@ -1315,7 +1315,13 @@ function showImport(r,origem){
   $('#impX').onclick=()=>box.hidden=true;
 }
 function importText(text,origem,after){
-  const r=MADB.load(text);
+  let r;
+  if(MADB.looksLikeDDL(text)){
+    const d=MADB.fromDDL(text);
+    r=MADB.load(JSON.stringify(d.json));
+    r.notes=d.notes.concat(r.notes||[]);
+    r.warnings=(r.warnings||[]).concat(d.warnings);
+  } else r=MADB.load(text);
   showImport(r,origem);
   if(r.errors.length||!r.model)return false;
   const go=mode=>{ // 'novo' | 'substituir'
