@@ -211,6 +211,16 @@ header{padding:8px 14px;gap:14px}
 .mg .mfoot{display:flex;align-items:center;gap:10px;padding:12px 16px;border-top:1px solid var(--line);flex-wrap:wrap}
 .mg .mfoot select{padding:5px 8px}
 .mg button:disabled{opacity:.4}
+.gsearch{position:relative;flex:0 1 340px;min-width:200px}
+.gsearch input{width:100%;padding:6px 10px;border-radius:8px}
+.gsres{position:absolute;top:calc(100% + 6px);left:0;right:0;max-height:360px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.45);z-index:140;padding:4px}
+.gsres .gsi{display:flex;gap:8px;align-items:baseline;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:13px}
+.gsres .gsi.on{background:var(--accent-soft)}
+.gsres .gsi.none{color:var(--muted);cursor:default}
+.gsres .gk{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--accent);min-width:56px}
+.gsres .gl{font-family:ui-monospace,Menlo,Consolas,monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gsres .gd{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.fxf{flex:0 0 130px;min-width:0;padding:4px 7px;font-size:12px}
 </style>
 </head>
 <body>
@@ -224,6 +234,7 @@ header{padding:8px 14px;gap:14px}
     <button id="bWsDel" class="sm ghost danger" data-tip="Excluir a arquitetura atual">Excluir</button>
   </div>
   <div class="spacer"></div>
+  <div class="gsearch"><input type="text" id="gsQ" placeholder="Buscar tabela, coluna, schema, enum…  (Ctrl+K)" autocomplete="off"><div id="gsRes" class="gsres" hidden></div></div>
   <button id="bShare" class="sm" data-tip="Compartilhar esta arquitetura com um colega (edição em tempo real)">Compartilhar</button>
   <button id="bClear" class="sm ghost danger" data-tip="Apagar todas as tabelas desta arquitetura (pede confirmação)">Esvaziar</button>
   <button id="bUser" class="avatar" data-tip="Seu perfil e preferências" aria-label="Perfil">?</button>
@@ -445,12 +456,16 @@ $('#bRedo').onclick=redo;
 updateHistBtns();
 
 /* ---------- editor ---------- */
-function refOptions(t,c){
-  let o=`<option value="">— sem chave estrangeira —</option>`;
-  S.tables.forEach(x=>{ if(x.id===t.id&&false)return; x.cols.forEach(y=>{
+function refOptions(t,c,filtro){
+  const f=(filtro||'').toLowerCase();
+  let o='<option value="">— sem chave estrangeira —</option>';
+  S.tables.forEach(x=>{x.cols.forEach(y=>{
     if(x.id===t.id&&y.id===c.id)return;
     const v=x.id+'|'+y.id, on=c.ref&&c.ref.t===x.id&&c.ref.c===y.id;
-    o+=`<option value="${v}" ${on?'selected':''}>→ ${esc(x.name)}.${esc(y.name)}${y.pk?' (PK)':''}</option>`;});});
+    const txt=(x.schema||'public')+'.'+x.name+'.'+y.name;
+    if(f&&!on&&!txt.toLowerCase().includes(f))return;
+    o+='<option value="'+v+'"'+(on?' selected':'')+'>→ '+esc(txt)+(y.pk?' (PK)':'')+'</option>';
+  });});
   return o;
 }
 const optList=(arr,v)=>arr.map(x=>`<option ${x===v?'selected':''}>${esc(x)}</option>`).join('');
@@ -466,7 +481,7 @@ function conHTML(t,k){
   else{
     const rt=tOf(k.ref.t);
     b=`<div class="r"><input type="text" data-f="ccols" value="${d('ccols',colNames(t,k.cols))}" placeholder="colunas desta tabela"></div>
-    <div class="r"><select data-f="creft">${S.tables.map(x=>`<option value="${x.id}" ${x.id===k.ref.t?'selected':''}>→ ${esc(x.name)}</option>`).join('')}</select>
+    <div class="r"><input type="text" data-fx="tabfilter" placeholder="filtrar tabela…" class="fxf"><select data-f="creft">${tabOptions(k.ref.t)}</select>
       <input type="text" data-f="crefcols" value="${d('crefcols',rt?colNames(rt,k.ref.cols):'')}" placeholder="colunas referenciadas">
       <select data-f="cdel" title="ON DELETE">${optList(DEL,k.del)}</select></div>${bad}`;
   }
@@ -509,7 +524,7 @@ function colHTML(t,c){
       <label><input type="checkbox" data-f="uq" ${c.uq?'checked':''}>UNIQUE</label>
       <input class="df" type="text" data-f="def" value="${esc(c.def)}" placeholder="DEFAULT">
     </div>
-    <div class="l3"><select data-f="ref">${refOptions(t,c)}</select>
+    <div class="l3"><input type="text" data-fx="reffilter" placeholder="filtrar…" class="fxf"><select data-f="ref">${refOptions(t,c)}</select>
       ${c.ref?`<select data-f="del" title="ON DELETE">${optList(DEL,c.del)}</select>`:''}</div>
     <details class="more" ${(c.identity||c.generated||c.comment)?'open':''}><summary>identity · gerada · comentário</summary>
       <div class="r"><select data-f="identity"><option value="">sem identity</option>${optList(['ALWAYS','BY DEFAULT'],c.identity)}</select>
@@ -1277,6 +1292,71 @@ $('#mgr').addEventListener('input',e=>{
   const q=$('#mgQ');q.focus();q.setSelectionRange(q.value.length,q.value.length);
 });
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#mgr').hidden)fecharMgr()});
+
+/* ---------- busca geral (Ctrl+K): tabelas, colunas, schemas e enums ---------- */
+const GS={items:[],i:0};
+function irTabela(id){sel=id;closePop();renderAll();const t=tOf(id);if(t){const cv=$('#canvas');panX=cv.clientWidth/2-(t.x+W/2)*zoom;panY=cv.clientHeight/2-(t.y+HH)*zoom;applyView()}}
+function irColuna(tid,cid){irTabela(tid);const t=tOf(tid),c=t&&cOf(t,cid);if(c)openPop(t,c)}
+function gsItems(q){
+  const s=q.trim().toLowerCase();if(!s)return [];
+  const hit=(...ps)=>ps.some(p=>String(p||'').toLowerCase().includes(s));
+  const out=[];
+  S.tables.forEach(t=>{
+    const sc=t.schema||'public';
+    if(hit(t.name,sc))out.push({k:'Tabela',l:(sc!=='public'?sc+'.':'')+t.name,d:t.cols.length+' colunas',run:()=>irTabela(t.id)});
+    t.cols.forEach(c=>{if(hit(c.name))out.push({k:'Coluna',l:t.name+'.'+c.name,d:c.type,run:()=>irColuna(t.id,c.id)})});
+  });
+  schemaNames().forEach(n=>{if(hit(n))out.push({k:'Schema',l:n,d:S.tables.filter(t=>ofSchema(t,n)).length+' tabelas',run:()=>abrirMgr()})});
+  S.enums.forEach(e=>{if(hit(e.name,e.schema))out.push({k:'Enum',l:(e.schema&&e.schema!=='public'?e.schema+'.':'')+e.name,d:e.values.length+' valores',run:()=>{sel=MODEL;renderAll()}})});
+  return out.slice(0,60);
+}
+function gsRender(){
+  const q=$('#gsQ').value;
+  GS.items=gsItems(q);GS.i=0;
+  const box=$('#gsRes');
+  if(!q.trim()){box.hidden=true;return}
+  box.hidden=false;
+  box.innerHTML=GS.items.length
+    ?GS.items.map((it,i)=>'<div class="gsi'+(i===0?' on':'')+'" data-i="'+i+'"><span class="gk">'+it.k+'</span><span class="gl">'+esc(it.l)+'</span><span class="gd">'+esc(it.d||'')+'</span></div>').join('')
+    :'<div class="gsi none">Nada encontrado</div>';
+}
+function gsMarca(){[...$('#gsRes').children].forEach((el,i)=>el.classList.toggle('on',i===GS.i))}
+function gsGo(i){
+  const it=GS.items[i];if(!it)return;
+  $('#gsQ').value='';$('#gsRes').hidden=true;$('#gsQ').blur();
+  it.run();
+}
+$('#gsQ').addEventListener('input',gsRender);
+$('#gsQ').addEventListener('keydown',e=>{
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+    e.preventDefault();const n=GS.items.length;if(!n)return;
+    GS.i=(GS.i+(e.key==='ArrowDown'?1:-1)+n)%n;gsMarca();
+  }
+  else if(e.key==='Enter'){e.preventDefault();gsGo(GS.i)}
+  else if(e.key==='Escape'){$('#gsRes').hidden=true;$('#gsQ').value='';$('#gsQ').blur()}
+});
+$('#gsRes').addEventListener('mousedown',e=>{const el=e.target.closest('[data-i]');if(el){e.preventDefault();gsGo(+el.dataset.i)}});
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('#gsQ').focus();$('#gsQ').select()}});
+document.addEventListener('pointerdown',e=>{if(!e.target.closest('.gsearch'))$('#gsRes').hidden=true});
+
+/* ---------- filtro nas listas de chave estrangeira ---------- */
+function tabOptions(selId,filtro){
+  const f=(filtro||'').toLowerCase();
+  return S.tables.filter(x=>!f||((x.schema||'public')+'.'+x.name).toLowerCase().includes(f)||x.id===selId)
+    .map(x=>'<option value="'+x.id+'"'+(x.id===selId?' selected':'')+'>→ '+esc((x.schema||'public')+'.'+x.name)+'</option>').join('');
+}
+$('#editor').addEventListener('input',e=>{
+  const x=e.target.dataset.fx;if(!x)return;
+  const t=tOf(sel);if(!t)return;
+  if(x==='reffilter'){
+    const col=e.target.closest('.col');const c=col&&cOf(t,col.dataset.cid);if(!c)return;
+    col.querySelector('select[data-f=ref]').innerHTML=refOptions(t,c,e.target.value);
+  }
+  else if(x==='tabfilter'){
+    const sub=e.target.closest('.sub');const k=sub&&(t.constraints||[]).find(o=>o.id===sub.dataset.id);if(!k)return;
+    sub.querySelector('select[data-f=creft]').innerHTML=tabOptions(k.ref&&k.ref.t,e.target.value);
+  }
+});
 
 /* ---------- barra do diagrama ---------- */
 $('#bLayout').onclick=()=>{histBefore(null);layoutSchemas(true);needFit=true;renderOut()};
