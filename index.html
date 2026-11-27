@@ -998,8 +998,21 @@ window.addEventListener('scroll',()=>{etip.hidden=true},true);
 let CLIP=null;
 const cloneJ=x=>JSON.parse(JSON.stringify(x));
 function copiarTabela(t){
-  CLIP=cloneJ(t);
-  setNotice('Tabela "'+t.name+'" copiada. Use Ctrl+V para colar.');renderOut(true);
+  const ext={};
+  const note=(tid,cid)=>{
+    if(tid===t.id)return;
+    const tt=tOf(tid);if(!tt)return;
+    ext[tid]=ext[tid]||{schema:tt.schema||'public',name:tt.name,cols:{}};
+    if(cid){const cc=cOf(tt,cid);if(cc)ext[tid].cols[cid]=cc.name}
+  };
+  t.cols.forEach(c=>{if(c.ref)note(c.ref.t,c.ref.c)});
+  (t.constraints||[]).forEach(k=>{if(k.kind==='fk'){note(k.ref.t);k.ref.cols.forEach(cid=>note(k.ref.t,cid))}});
+  const tipos=new Set(t.cols.map(c=>c.type));
+  const enums=S.enums.filter(e=>tipos.has(e.name)||tipos.has((e.schema||'public')+'.'+e.name)).map(cloneJ);
+  const usadas=new Set((t.triggers||[]).map(g=>g.function));
+  const funcs=(S.functions||[]).filter(f=>usadas.has(f.schema+'.'+f.name)).map(cloneJ);
+  CLIP=cloneJ(t);CLIP.ext=ext;CLIP.enums=enums;CLIP.funcs=funcs;
+  setNotice('Tabela "'+t.name+'" copiada. Vá a outra arquitetura (ou fique aqui) e use Ctrl+V.');renderOut(true);
 }
 /* posição livre mais perto da tabela de origem: direita, abaixo, esquerda, acima e depois anéis maiores */
 function acharVaga(src,h){
@@ -1017,21 +1030,50 @@ function acharVaga(src,h){
 function colarTabela(){
   const src=CLIP;if(!src)return;
   histBefore(null);
+  const avisos=[];
+  /* enums e funções usados pela tabela: criados aqui se ainda não existirem */
+  (src.enums||[]).forEach(e=>{
+    if(!S.enums.some(x=>x.name===e.name&&(x.schema||'public')===(e.schema||'public')))
+      S.enums.push(Object.assign(cloneJ(e),{id:MADB.newId(S,'enum')}));
+  });
+  S.functions=S.functions||[];
+  (src.funcs||[]).forEach(f=>{
+    if(!S.functions.some(x=>x.name===f.name&&(x.schema||'public')===(f.schema||'public')))
+      S.functions.push(Object.assign(cloneJ(f),{id:MADB.newId(S,'function')}));
+  });
   const sc=src.schema||'public';
   const taken=new Set(S.tables.filter(x=>(x.schema||'public')===sc).map(x=>x.name));
   let nm=src.name+'_copia',k=2;while(taken.has(nm))nm=src.name+'_copia'+(k++);
   const t={id:MADB.newId(S,'table'),name:nm,schema:src.schema,x:null,y:null,cols:[]};
   if(src.comment)t.comment=src.comment;
   S.tables.push(t);
+  /* tabela de destino de uma referência: procurada pelo nome nesta arquitetura */
+  const resolve=(tid,cid)=>{
+    const ex=src.ext[tid];if(!ex)return null;
+    const tt=S.tables.find(x=>x!==t&&(x.schema||'public')===ex.schema&&x.name===ex.name);if(!tt)return null;
+    const cc=tt.cols.find(c=>c.name===ex.cols[cid]);return cc?{t:tt.id,c:cc.id}:null;
+  };
   const cmap={};
-  src.cols.forEach(c=>{const id=MADB.newId(S,'col',t);cmap[c.id]=id;const o=Object.assign(cloneJ(c),{id});
-    if(o.ref&&o.ref.t===src.id)o.ref={t:t.id,c:cmap[o.ref.c]||o.ref.c};
-    t.cols.push(o)});
-  if(src.constraints){t.constraints=[];src.constraints.forEach(k=>{
-    const o=cloneJ(k);o.id=MADB.newId(S,'constraint',t);
+  src.cols.forEach(c=>{
+    const id=MADB.newId(S,'col',t);cmap[c.id]=id;const o=Object.assign(cloneJ(c),{id});
+    if(o.ref){
+      if(o.ref.t===src.id)o.ref={t:t.id,c:cmap[o.ref.c]||o.ref.c};
+      else{const r=resolve(o.ref.t,o.ref.c);if(r)o.ref=r;else{avisos.push('FK de '+c.name+' removida (destino não existe aqui)');o.ref=null;o.del='NO ACTION'}}
+    }
+    t.cols.push(o);
+  });
+  if(src.constraints){t.constraints=[];src.constraints.forEach(kc=>{
+    const o=cloneJ(kc);
+    if(o.kind==='fk'){
+      if(o.ref.t===src.id){o.ref.t=t.id;o.ref.cols=o.ref.cols.map(id=>cmap[id]||id)}
+      else{const rs=o.ref.cols.map(cid=>resolve(o.ref.t,cid));
+        if(rs.some(r=>!r)){avisos.push('restrição '+(o.name||'FK')+' removida (destino não existe aqui)');return}
+        o.ref={t:rs[0].t,cols:rs.map(r=>r.c)}}
+    }
+    o.id=MADB.newId(S,'constraint',t);
     if(o.cols)o.cols=o.cols.map(id=>cmap[id]||id);
-    if(o.kind==='fk'&&o.ref&&o.ref.t===src.id){o.ref.t=t.id;o.ref.cols=o.ref.cols.map(id=>cmap[id]||id)}
-    t.constraints.push(o)})}
+    t.constraints.push(o);
+  });if(!t.constraints.length)delete t.constraints}
   if(src.indexes){t.indexes=[];src.indexes.forEach(x=>{
     const o=cloneJ(x);o.id=MADB.newId(S,'index',t);
     o.cols=o.cols.map(e=>e.c?Object.assign(e,{c:cmap[e.c]||e.c}):e);
@@ -1043,7 +1085,7 @@ function colarTabela(){
   const vaga=acharVaga(orig.x!=null?orig:{x:0,y:0},tH(t));
   t.x=vaga.x;t.y=vaga.y;
   sel=t.id;closePop();renderAll();
-  setNotice('Tabela colada: '+nm+' (posicione onde quiser)');renderOut(true);
+  setNotice('Tabela colada: '+nm+(avisos.length?' · '+avisos.join('; '):' (posicione onde quiser)'));renderOut(true);
 }
 
 /* ---------- arrastar colunas para ordenar (na tabela selecionada) ---------- */
