@@ -1032,7 +1032,7 @@ document.addEventListener('paste',e=>{
   e.preventDefault();
   let obj=null;try{obj=JSON.parse(txt.slice(CLIP_TAG.length))}catch(_){}
   if(!obj||!obj.cols){setNotice('Não consegui colar: a área de transferência não tem uma tabela válida do MADB.');renderOut(true);return}
-  CLIP=obj;colarTabela();
+  colarDeClipboard(obj);
 });
 function copiarTabela(t){
   pendingTableCopy=true;setTimeout(()=>{pendingTableCopy=false},0);
@@ -1049,7 +1049,7 @@ function copiarTabela(t){
   const enums=S.enums.filter(e=>tipos.has(e.name)||tipos.has((e.schema||'public')+'.'+e.name)).map(cloneJ);
   const usadas=new Set((t.triggers||[]).map(g=>g.function));
   const funcs=(S.functions||[]).filter(f=>usadas.has(f.schema+'.'+f.name)).map(cloneJ);
-  CLIP=cloneJ(t);CLIP.ext=ext;CLIP.enums=enums;CLIP.funcs=funcs;
+  CLIP=cloneJ(t);CLIP.ext=ext;CLIP.enums=enums;CLIP.funcs=funcs;CLIP.origem={wsId:DB.active,wsName:cur().name};
   setNotice('Tabela "'+t.name+'" copiada. Use Ctrl+V aqui ou em outra guia/arquitetura.');renderOut(true);
 }
 /* posição livre mais perto da tabela de origem: direita, abaixo, esquerda, acima e depois anéis maiores */
@@ -1064,6 +1064,20 @@ function acharVaga(src,h){
     for(const [i,j] of ring){const x=src.x+i*gx,y=src.y+j*gy;if(!bateu(x,y))return {x:x,y:y};}
   }
   return {x:src.x+gx,y:src.y};
+}
+/* colagem vinda da área de transferência: pede confirmação quando a tabela veio de outra arquitetura */
+function colarDeClipboard(obj){
+  CLIP=obj;
+  if(obj.origem&&obj.origem.wsId===DB.active){colarTabela();return}
+  const origem=obj.origem?obj.origem.wsName:'outra arquitetura';
+  const ext=obj.ext||{};
+  const ausentes=[...new Set(Object.values(ext).filter(ex=>!S.tables.some(x=>(x.schema||'public')===ex.schema&&x.name===ex.name)).map(ex=>ex.schema+'.'+ex.name))];
+  const novosEnums=(obj.enums||[]).filter(e=>!S.enums.some(x=>x.name===e.name&&(x.schema||'public')===(e.schema||'public'))).map(e=>e.name);
+  let msg='Você copiou "'+obj.name+'" da arquitetura "'+origem+'" e vai colar em "'+cur().name+'".';
+  if(ausentes.length)msg+=' As FKs para '+ausentes.join(', ')+' serão removidas, porque essas tabelas não existem aqui.';
+  if(novosEnums.length)msg+=' Serão criados os enums: '+novosEnums.join(', ')+'.';
+  msg+=' Você tem certeza?';
+  openModal({title:'Colar tabela de outra arquitetura?',input:false,ok:'Sim, colar',msg:msg,onOk:()=>colarTabela()});
 }
 function colarTabela(){
   const src=CLIP;if(!src)return;
@@ -1119,7 +1133,9 @@ function colarTabela(){
   if(src.triggers){t.triggers=[];src.triggers.forEach(g=>{const o=cloneJ(g);o.id=MADB.newId(S,'trigger',t);t.triggers.push(o)})}
   if(src.partition){t.partition=cloneJ(src.partition);t.partition.cols=t.partition.cols.map(id=>cmap[id]||id)}
   if(src.partitions){t.partitions=[];src.partitions.forEach(p=>{const o=cloneJ(p);o.id=MADB.newId(S,'partition',t);o.name=p.name+'_copia';t.partitions.push(o)})}
-  const orig=tOf(src.id)||src;
+  /* tabela de outra arquitetura: o id pode existir aqui com outro significado, então não usa a posição dela */
+  const deOutra=!src.origem||src.origem.wsId!==DB.active;
+  const orig=deOutra?{x:0,y:0}:(tOf(src.id)||src);
   const vaga=acharVaga(orig.x!=null?orig:{x:0,y:0},tH(t));
   t.x=vaga.x;t.y=vaga.y;
   sel=t.id;closePop();renderAll();
