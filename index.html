@@ -181,6 +181,7 @@ header{padding:8px 14px;gap:14px}
 .etip[hidden]{display:none}
 .rowhit{fill:rgba(0,0,0,.001);cursor:grab}
 .rowhit:hover{fill:rgba(250,204,21,.08)}
+.rowhit.on{fill:rgba(250,204,21,.22)}
 .modal .vl{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);margin-bottom:10px}
 .modal textarea{width:100%;min-height:120px;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px}
 .etip .eh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line)}
@@ -333,6 +334,7 @@ header{padding:8px 14px;gap:14px}
 const W=230,HH=34,RH=22,HEAD=44,COLGAP=70,TGAP=40;
 let warnKey='',warnsHidden=true,lastWarnText='';
 const WARN_SEEN={};let WARN_FORCE=false;
+const colSel=new Set();let colSelTid=null;let pendingText='';
 let needFit=true,dim={w:320,h:240},ctr={x:0,y:0},panX=0,panY=0;
 const DEL=MADB.DEL_ACTIONS;
 let S=MADB.emptyModel(),sel=null,zoom=1,tab='sql';
@@ -447,7 +449,7 @@ document.addEventListener('keydown',e=>{
     confirmDel(delLabel('delT'),()=>act('delT'));
     return;
   }
-  if(mod&&!e.shiftKey&&k==='c'&&sel!==null&&sel!==MODEL&&tOf(sel)){copiarTabela(tOf(sel))}
+  if(mod&&!e.shiftKey&&k==='c'&&sel!==null&&sel!==MODEL&&tOf(sel)){if(colSel.size&&colSelTid===sel)copiarColunas(tOf(sel));else copiarTabela(tOf(sel))}
   else if(mod&&!e.shiftKey&&k==='z'){e.preventDefault();undo()}
   else if(mod&&(k==='y'||(e.shiftKey&&k==='z'))){e.preventDefault();redo()}
 });
@@ -770,6 +772,7 @@ function fitZoom(){
   panX=aw/2-ctr.x*zoom;panY=ah/2-ctr.y*zoom;
 }
 function renderDiagram(){
+  if(colSelTid!==sel){colSel.clear();colSelTid=sel}
   layoutSchemas(false);
   let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
   S.tables.forEach(t=>{
@@ -830,7 +833,7 @@ function renderDiagram(){
   const st=tOf(sel);
   if(st){
     st.cols.forEach((c,i)=>{
-      o+=`<rect class="rowhit" data-a="pickCol" data-cid="${c.id}" x="${st.x}" y="${st.y+HH+i*RH}" width="${W}" height="${RH}"/>`;
+      o+=`<rect class="rowhit${colSel.has(c.id)?' on':''}" data-a="pickCol" data-cid="${c.id}" x="${st.x}" y="${st.y+HH+i*RH}" width="${W}" height="${RH}"/>`;
       o+=`<g class="fab" data-a="pickCol" data-cid="${c.id}" transform="translate(${st.x+W+8},${st.y+HH+i*RH+3})"><title>Editar coluna</title><circle cx="9" cy="9" r="9"/><text x="9" y="13" text-anchor="middle">✎</text></g>`;
     });
     o+=`<g class="fab pill" data-a="addCol" transform="translate(${st.x+W/2-46},${st.y+tH(st)+8})"><rect width="92" height="22" rx="11"/><text x="46" y="15" text-anchor="middle">+ coluna</text></g>`;
@@ -876,7 +879,15 @@ $('#svg').addEventListener('click',e=>{
   const t=tOf(sel);if(!t)return;
   if(a.dataset.a==='addCol'){histBefore(null);const c=mkCol(t,'coluna_'+(t.cols.length+1),'text');renderAll();openPop(t,c)}
   else if(a.dataset.a==='quick'){histBefore(null);quick(a.dataset.q,t)}
-  else if(a.dataset.a==='pickCol'){const c=cOf(t,a.dataset.cid);if(c)openPop(t,c,a)}
+  else if(a.dataset.a==='pickCol'){
+    if(e.ctrlKey||e.metaKey){
+      colSelTid=t.id;if(colSel.has(a.dataset.cid))colSel.delete(a.dataset.cid);else colSel.add(a.dataset.cid);
+      closePop();renderDiagram();
+      setNotice(colSel.size?colSel.size+' coluna(s) selecionada(s). Ctrl+C copia; escolha a tabela de destino e Ctrl+V.':'');renderOut(true);
+      return;
+    }
+    colSel.clear();const c=cOf(t,a.dataset.cid);if(c)openPop(t,c,a);
+  }
 });
 
 /* popover de coluna: nome, tipo, PK/NOT NULL/UNIQUE, remover */
@@ -1035,14 +1046,15 @@ let pendingTableCopy=false;
 const CLIP_TAG='MADB-TABELA:';
 const campoEditavel=el=>!!el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.isContentEditable);
 document.addEventListener('copy',e=>{
-  if(!pendingTableCopy||!CLIP||campoEditavel(e.target))return;
+  if(!pendingTableCopy||!pendingText||campoEditavel(e.target))return;
   pendingTableCopy=false;
-  e.clipboardData.setData('text/plain',CLIP_TAG+JSON.stringify(CLIP));
+  e.clipboardData.setData('text/plain',pendingText);
   e.preventDefault();
 });
 document.addEventListener('paste',e=>{
   if(campoEditavel(e.target))return;
   const txt=(e.clipboardData&&e.clipboardData.getData('text/plain'))||'';
+  if(txt.startsWith(CLIP_COL_TAG)){e.preventDefault();colarColunasDeClipboard(txt);return}
   if(!txt.startsWith(CLIP_TAG))return;
   e.preventDefault();
   let obj=null;try{obj=JSON.parse(txt.slice(CLIP_TAG.length))}catch(_){}
@@ -1065,6 +1077,7 @@ function copiarTabela(t){
   const usadas=new Set((t.triggers||[]).map(g=>g.function));
   const funcs=(S.functions||[]).filter(f=>usadas.has(f.schema+'.'+f.name)).map(cloneJ);
   CLIP=cloneJ(t);CLIP.ext=ext;CLIP.enums=enums;CLIP.funcs=funcs;CLIP.origem={wsId:DB.active,wsName:cur().name};
+  pendingText=CLIP_TAG+JSON.stringify(CLIP);
   setNotice('Tabela "'+t.name+'" copiada. Use Ctrl+V aqui ou em outra guia/arquitetura.');renderOut(true);
 }
 /* posição livre mais perto da tabela de origem: direita, abaixo, esquerda, acima e depois anéis maiores */
@@ -1155,6 +1168,71 @@ function colarTabela(){
   t.x=vaga.x;t.y=vaga.y;
   sel=t.id;closePop();renderAll();
   setNotice('Tabela colada: '+nm+(avisos.length?' · '+avisos.join('; '):' (posicione onde quiser)'));renderOut(true);
+}
+
+
+/* ---------- copiar e colar colunas selecionadas (Ctrl+C / Ctrl+V) ---------- */
+const CLIP_COL_TAG='MADB-COLUNAS:';
+function copiarColunas(t){
+  const cols=t.cols.filter(c=>colSel.has(c.id));
+  if(!cols.length)return;
+  const ext={};
+  const note=(tid,cid)=>{
+    const tt=tOf(tid);if(!tt)return;
+    ext[tid]=ext[tid]||{schema:tt.schema||'public',name:tt.name,cols:{}};
+    if(cid){const cc=cOf(tt,cid);if(cc)ext[tid].cols[cid]=cc.name}
+  };
+  cols.forEach(c=>{if(c.ref)note(c.ref.t,c.ref.c)});
+  const tipos=new Set(cols.map(c=>c.type));
+  const enums=S.enums.filter(e=>tipos.has(e.name)||tipos.has((e.schema||'public')+'.'+e.name)).map(cloneJ);
+  const obj={origem:{wsId:DB.active,wsName:cur().name},tabela:{id:t.id,name:t.name,schema:t.schema||'public'},cols:cloneJ(cols),ext:ext,enums:enums};
+  pendingText=CLIP_COL_TAG+JSON.stringify(obj);
+  pendingTableCopy=true;setTimeout(()=>{pendingTableCopy=false},0);
+  setNotice(cols.length+' coluna(s) copiada(s). Selecione uma tabela e use Ctrl+V.');renderOut(true);
+}
+/* colunas vindas da área de transferência */
+function colarColunasDeClipboard(txt){
+  let obj=null;try{obj=JSON.parse(txt.slice(CLIP_COL_TAG.length))}catch(_){}
+  if(!obj||!obj.cols){setNotice('Não consegui colar: as colunas da área de transferência não são válidas.');renderOut(true);return}
+  const t=tOf(sel);
+  if(!t){setNotice('Selecione a tabela de destino antes de colar (Ctrl+V).');renderOut(true);return}
+  if(obj.origem&&obj.origem.wsId===DB.active){colarColunas(obj,t);return}
+  const origem=obj.origem?obj.origem.wsName:'outra arquitetura';
+  openModal({title:'Colar colunas de outra arquitetura?',input:false,ok:'Sim, colar',
+    msg:'Você copiou '+obj.cols.length+' coluna(s) de "'+obj.tabela.name+'" (arquitetura "'+origem+'") para "'+t.name+'" em "'+cur().name+'". As FKs para tabelas que não existem aqui serão removidas. Você tem certeza?',
+    onOk:()=>{const dest=tOf(sel);if(dest)colarColunas(obj,dest)}});
+}
+function colarColunas(obj,t){
+  if(!t)return;
+  histBefore(null);
+  const avisos=[];
+  (obj.enums||[]).forEach(e=>{
+    if(!S.enums.some(x=>x.name===e.name&&(x.schema||'public')===(e.schema||'public')))
+      S.enums.push(Object.assign(cloneJ(e),{id:MADB.newId(S,'enum')}));
+  });
+  const resolve=(tid,cid)=>{
+    const ex=obj.ext[tid];if(!ex)return null;
+    const tt=S.tables.find(x=>(x.schema||'public')===ex.schema&&x.name===ex.name);if(!tt)return null;
+    const cc=tt.cols.find(c=>c.name===ex.cols[cid]);return cc?{t:tt.id,c:cc.id}:null;
+  };
+  const nomes=new Set(t.cols.map(c=>c.name));
+  obj.cols.forEach(src=>{
+    const o=cloneJ(src);o.id=MADB.newId(S,'col',t);
+    let nm=src.name,k=0;while(nomes.has(nm)){nm=src.name+'_copia'+(k?k+1:'');k++}
+    if(nm!==src.name)avisos.push(src.name+' virou '+nm+' (nome já existe)');
+    o.name=nm;nomes.add(nm);
+    if(o.pk){o.pk=false;avisos.push(nm+' sem chave primária (a tabela pode já ter uma)')}
+    if(o.ref){
+      const r=resolve(o.ref.t,o.ref.c);
+      if(r)o.ref=r;else{avisos.push('FK de '+nm+' removida (destino não existe aqui)');o.ref=null;o.del='NO ACTION'}
+    }
+    t.cols.push(o);
+  });
+  colSel.clear();
+  sel=t.id;
+  renderAll();
+  setNotice(obj.cols.length+' coluna(s) colada(s) em "'+t.name+'"'+(avisos.length?' · '+avisos.join('; '):''));
+  renderOut(true);
 }
 
 /* ---------- arrastar colunas para ordenar (na tabela selecionada) ---------- */
