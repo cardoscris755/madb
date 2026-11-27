@@ -1647,11 +1647,15 @@ function paintSala(){
   if(!r){p.innerHTML=`<div class="uh">Compartilhar</div>
     <p class="un">Crie uma sala para um colega editar esta arquitetura com você, em tempo real.</p>
     <div class="pr2"><span class="spacer"></span><button class="sm primary" data-s="criar">Criar sala</button></div>`;return}
-  const link=`${location.origin}${location.pathname}?sala=${encodeURIComponent(r.id)}&srv=${encodeURIComponent(r.srv)}`;
+  /* o link precisa abrir em qualquer navegador: aberto como arquivo local, usa o endereço publicado */
+  const base=/^https?:$/.test(location.protocol)?location.origin+location.pathname:'https://cardoscris755.github.io/madb/';
+  const link=`${base}?sala=${encodeURIComponent(r.id)}&srv=${encodeURIComponent(r.srv)}`;
+  const aviso=/^https?:$/.test(location.protocol)?'':'<p class="un">Você está com o MADB aberto como arquivo local. O link usa o endereço publicado, para abrir em qualquer navegador.</p>';
   const estado=salaAtiva()?'● conectado':'○ reconectando…';
   const peers=Object.values(SALA.peers).map(x=>`<span class="pchip" style="border-color:${x.color}">${esc(x.name)}</span>`).join('')||'<span class="un">Só você por enquanto</span>';
   p.innerHTML=`<div class="uh">Sala · ${estado}</div>
     <label class="ul">Link para o colega<input type="text" id="salaLink" readonly value="${esc(link)}"></label>
+    ${aviso}
     <div class="pr2"><button class="sm primary" data-s="copiar">Copiar link</button></div>
     <div class="ul">Na sala<div class="pchips">${peers}</div></div>
     <p class="un">Quem tiver o link pode editar. Não há login por enquanto.</p>
