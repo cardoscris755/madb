@@ -1001,6 +1001,19 @@ function copiarTabela(t){
   CLIP=cloneJ(t);
   setNotice('Tabela "'+t.name+'" copiada. Use Ctrl+V para colar.');renderOut(true);
 }
+/* posição livre mais perto da tabela de origem: direita, abaixo, esquerda, acima e depois anéis maiores */
+function acharVaga(src,h){
+  const bateu=(x,y)=>S.tables.some(o=>o.x!=null&&o.y!=null&&x<o.x+W+30&&x+W+30>o.x&&y<o.y+tH(o)+30&&y+h+30>o.y);
+  const gx=W+60,gy=h+50;
+  for(let r=1;r<=30;r++){
+    const ring=[];
+    for(let i=-r;i<=r;i++)for(let j=-r;j<=r;j++)if(Math.max(Math.abs(i),Math.abs(j))===r)ring.push([i,j]);
+    const prio=([i,j])=>(i===r&&j===0)?0:(j===r&&i===0)?1:(i===-r&&j===0)?2:(j===-r&&i===0)?3:4;
+    ring.sort((a,b)=>prio(a)-prio(b)||Math.hypot(a[0],a[1])-Math.hypot(b[0],b[1]));
+    for(const [i,j] of ring){const x=src.x+i*gx,y=src.y+j*gy;if(!bateu(x,y))return {x:x,y:y};}
+  }
+  return {x:src.x+gx,y:src.y};
+}
 function colarTabela(){
   const src=CLIP;if(!src)return;
   histBefore(null);
@@ -1026,6 +1039,9 @@ function colarTabela(){
   if(src.triggers){t.triggers=[];src.triggers.forEach(g=>{const o=cloneJ(g);o.id=MADB.newId(S,'trigger',t);t.triggers.push(o)})}
   if(src.partition){t.partition=cloneJ(src.partition);t.partition.cols=t.partition.cols.map(id=>cmap[id]||id)}
   if(src.partitions){t.partitions=[];src.partitions.forEach(p=>{const o=cloneJ(p);o.id=MADB.newId(S,'partition',t);o.name=p.name+'_copia';t.partitions.push(o)})}
+  const orig=tOf(src.id)||src;
+  const vaga=acharVaga(orig.x!=null?orig:{x:0,y:0},tH(t));
+  t.x=vaga.x;t.y=vaga.y;
   sel=t.id;closePop();renderAll();
   setNotice('Tabela colada: '+nm+' (posicione onde quiser)');renderOut(true);
 }
