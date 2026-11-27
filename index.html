@@ -179,6 +179,8 @@ header{padding:8px 14px;gap:14px}
 .tb .ct.enumt{fill:var(--accent);font-weight:600;cursor:help}
 .etip{position:fixed;z-index:110;width:280px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;box-shadow:0 12px 32px rgba(0,0,0,.45);pointer-events:none;font:13px system-ui,sans-serif;color:var(--text)}
 .etip[hidden]{display:none}
+.rowhit{fill:rgba(0,0,0,.001);cursor:grab}
+.rowhit:hover{fill:rgba(250,204,21,.08)}
 .modal .vl{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);margin-bottom:10px}
 .modal textarea{width:100%;min-height:120px;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px}
 .etip .eh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line)}
@@ -410,7 +412,9 @@ document.addEventListener('keydown',e=>{
   const tag=e.target.tagName||'';
   if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||e.target.isContentEditable)return;
   const k=e.key.toLowerCase(),mod=e.ctrlKey||e.metaKey;
-  if(mod&&!e.shiftKey&&k==='z'){e.preventDefault();undo()}
+  if(mod&&!e.shiftKey&&k==='c'&&sel!==null&&sel!==MODEL&&tOf(sel)){e.preventDefault();copiarTabela(tOf(sel))}
+  else if(mod&&!e.shiftKey&&k==='v'&&CLIP){e.preventDefault();colarTabela()}
+  else if(mod&&!e.shiftKey&&k==='z'){e.preventDefault();undo()}
   else if(mod&&(k==='y'||(e.shiftKey&&k==='z'))){e.preventDefault();redo()}
 });
 $('#bUndo').onclick=undo;
@@ -788,6 +792,7 @@ function renderDiagram(){
   const st=tOf(sel);
   if(st){
     st.cols.forEach((c,i)=>{
+      o+=`<rect class="rowhit" data-a="pickCol" data-cid="${c.id}" x="${st.x}" y="${st.y+HH+i*RH}" width="${W}" height="${RH}"/>`;
       o+=`<g class="fab" data-a="pickCol" data-cid="${c.id}" transform="translate(${st.x+W+8},${st.y+HH+i*RH+3})"><title>Editar coluna</title><circle cx="9" cy="9" r="9"/><text x="9" y="13" text-anchor="middle">✎</text></g>`;
     });
     o+=`<g class="fab pill" data-a="addCol" transform="translate(${st.x+W/2-46},${st.y+tH(st)+8})"><rect width="92" height="22" rx="11"/><text x="46" y="15" text-anchor="middle">+ coluna</text></g>`;
@@ -983,6 +988,70 @@ $('#svg').addEventListener('pointerover',e=>{
 $('#svg').addEventListener('pointermove',e=>{if(!etip.hidden)placeEtip(e.clientX,e.clientY)});
 $('#svg').addEventListener('pointerleave',()=>{etip.hidden=true});
 window.addEventListener('scroll',()=>{etip.hidden=true},true);
+
+/* ---------- copiar e colar tabela (Ctrl+C / Ctrl+V) ---------- */
+let CLIP=null;
+const cloneJ=x=>JSON.parse(JSON.stringify(x));
+function copiarTabela(t){
+  CLIP=cloneJ(t);
+  setNotice('Tabela "'+t.name+'" copiada. Use Ctrl+V para colar.');renderOut(true);
+}
+function colarTabela(){
+  const src=CLIP;if(!src)return;
+  histBefore(null);
+  const sc=src.schema||'public';
+  const taken=new Set(S.tables.filter(x=>(x.schema||'public')===sc).map(x=>x.name));
+  let nm=src.name+'_copia',k=2;while(taken.has(nm))nm=src.name+'_copia'+(k++);
+  const t={id:MADB.newId(S,'table'),name:nm,schema:src.schema,x:null,y:null,cols:[]};
+  if(src.comment)t.comment=src.comment;
+  S.tables.push(t);
+  const cmap={};
+  src.cols.forEach(c=>{const id=MADB.newId(S,'col',t);cmap[c.id]=id;const o=Object.assign(cloneJ(c),{id});
+    if(o.ref&&o.ref.t===src.id)o.ref={t:t.id,c:cmap[o.ref.c]||o.ref.c};
+    t.cols.push(o)});
+  if(src.constraints){t.constraints=[];src.constraints.forEach(k=>{
+    const o=cloneJ(k);o.id=MADB.newId(S,'constraint',t);
+    if(o.cols)o.cols=o.cols.map(id=>cmap[id]||id);
+    if(o.kind==='fk'&&o.ref&&o.ref.t===src.id){o.ref.t=t.id;o.ref.cols=o.ref.cols.map(id=>cmap[id]||id)}
+    t.constraints.push(o)})}
+  if(src.indexes){t.indexes=[];src.indexes.forEach(x=>{
+    const o=cloneJ(x);o.id=MADB.newId(S,'index',t);
+    o.cols=o.cols.map(e=>e.c?Object.assign(e,{c:cmap[e.c]||e.c}):e);
+    t.indexes.push(o)})}
+  if(src.triggers){t.triggers=[];src.triggers.forEach(g=>{const o=cloneJ(g);o.id=MADB.newId(S,'trigger',t);t.triggers.push(o)})}
+  if(src.partition){t.partition=cloneJ(src.partition);t.partition.cols=t.partition.cols.map(id=>cmap[id]||id)}
+  if(src.partitions){t.partitions=[];src.partitions.forEach(p=>{const o=cloneJ(p);o.id=MADB.newId(S,'partition',t);o.name=p.name+'_copia';t.partitions.push(o)})}
+  sel=t.id;closePop();renderAll();
+  setNotice('Tabela colada: '+nm+' (posicione onde quiser)');renderOut(true);
+}
+
+/* ---------- arrastar colunas para ordenar (na tabela selecionada) ---------- */
+let colDrag=null;
+$('#svg').addEventListener('pointerdown',e=>{
+  const f=e.target.closest('[data-a=pickCol]');if(!f||e.button!==0)return;
+  const t=tOf(sel);if(!t)return;
+  colDrag={tid:t.id,cid:f.dataset.cid,sy:e.clientY,moved:false,hist:false};
+});
+window.addEventListener('pointermove',e=>{
+  if(!colDrag)return;
+  if(!colDrag.moved&&Math.abs(e.clientY-colDrag.sy)<5)return;
+  colDrag.moved=true;
+  const t=tOf(colDrag.tid);if(!t)return;
+  const r=$('#canvas').getBoundingClientRect();
+  const wy=(e.clientY-r.top-panY)/zoom;
+  let idx=Math.floor((wy-t.y-HH)/RH);
+  idx=Math.max(0,Math.min(t.cols.length-1,idx));
+  const from=t.cols.findIndex(c=>c.id===colDrag.cid);
+  if(from<0||idx===from)return;
+  if(!colDrag.hist){histBefore(null);colDrag.hist=true}
+  const moved=t.cols.splice(from,1)[0];t.cols.splice(idx,0,moved);
+  renderDiagram();
+});
+window.addEventListener('pointerup',()=>{
+  if(!colDrag)return;
+  const moved=colDrag.moved;colDrag=null;
+  if(moved){renderAll();setNotice('Ordem das colunas alterada')}
+});
 
 /* ---------- barra do diagrama ---------- */
 $('#bLayout').onclick=()=>{histBefore(null);layoutSchemas(true);needFit=true;renderOut()};
