@@ -196,6 +196,21 @@ header{padding:8px 14px;gap:14px}
 #relp .rl1,#relp .rarr{font-size:12.5px;margin-bottom:4px}
 #relp code{font:12px ui-monospace,Menlo,Consolas,monospace;background:var(--panel2);padding:1px 5px;border-radius:4px}
 #relp .pr2 select{font-size:12px}
+.mgr-bg{align-items:center}
+.mg{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(860px,96vw);max-height:86vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.mg .mh{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:15px}
+.mg .mtool{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.mg .mtool input{flex:1;min-width:200px;padding:6px 9px}
+.mg .mlist{overflow:auto;padding:6px 8px;flex:1;min-height:120px}
+.mg .mgs{border:1px solid var(--line);border-radius:8px;margin:6px 4px 10px;overflow:hidden}
+.mg .mgh{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--panel2)}
+.mg .mrow{display:flex;align-items:center;gap:10px;padding:6px 14px 6px 30px;border-top:1px solid var(--line);cursor:pointer}
+.mg .mrow:hover{background:var(--accent-soft)}
+.mg .mrow .mn{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;flex:1}
+.mg .pad{padding:8px 30px}
+.mg .mfoot{display:flex;align-items:center;gap:10px;padding:12px 16px;border-top:1px solid var(--line);flex-wrap:wrap}
+.mg .mfoot select{padding:5px 8px}
+.mg button:disabled{opacity:.4}
 </style>
 </head>
 <body>
@@ -240,6 +255,7 @@ header{padding:8px 14px;gap:14px}
   <label id="autoW" hidden data-tip="Acompanhar o arquivo vinculado automaticamente"><input type="checkbox" id="optAuto"> Auto</label>
   <input type="file" id="fileIn" accept=".json,.sql,application/json,text/plain" hidden>
 </div>
+<div class="modal-bg mgr-bg" id="mgr" hidden><div class="mg" role="dialog" aria-label="Schemas e tabelas"></div></div>
 <div class="dropov" id="dropov" hidden>Solte o arquivo .json ou .sql para importar</div>
 <div class="pop" id="pop" hidden></div>
 <div class="pop" id="relp" hidden></div>
@@ -254,6 +270,7 @@ header{padding:8px 14px;gap:14px}
       <div class="toolbar">
         <button class="sm primary" id="bAddT" data-tip="Criar uma tabela">+ Tabela</button>
         <button class="sm" id="bModel" data-tip="Schemas, enums, funções e opções do modelo">Modelo</button>
+        <button class="sm" id="bSchemas" data-tip="Criar, renomear e excluir schemas; mover tabelas para outro schema">Schemas</button>
         <button class="sm" id="bEnum" data-tip="Criar um tipo enum (lista de valores fixos)">+ Enum</button>
         <button class="sm" id="bLayout" data-tip="Organizar as tabelas em colunas por schema">Organizar</button>
         <button class="sm" id="bFit" data-tip="Enquadrar tudo na tela">Ajustar</button>
@@ -1136,6 +1153,114 @@ window.addEventListener('pointerup',()=>{
   const moved=colDrag.moved;colDrag=null;
   if(moved){renderAll();setNotice('Ordem das colunas alterada')}
 });
+
+/* ---------- gerenciador de schemas e tabelas ---------- */
+let mgrQ='';const mgrSel=new Set();
+const schemaNames=()=>{
+  const names=new Set((S.schemas||[]).map(s=>s.name));S.tables.forEach(t=>names.add(t.schema||'public'));
+  names.add('public');
+  return [...names].sort((a,b)=>a==='public'?-1:b==='public'?1:a.localeCompare(b));
+};
+const ofSchema=(tbl,n)=>(tbl.schema||'public')===n;
+const casaBusca=t=>!mgrQ||t.name.toLowerCase().includes(mgrQ.toLowerCase());
+const visibleTabs=()=>S.tables.filter(casaBusca);
+function ensureSchema(n){if(n==='public')return;S.schemas=S.schemas||[];if(!S.schemas.some(x=>x.name===n))S.schemas.push({name:n})}
+function afterMgr(msg){setNotice(msg);renderAll();renderMgr()}
+function renderMgr(){
+  const names=schemaNames();
+  let h='<div class="mh"><b>Schemas e tabelas</b><span class="spacer"></span><button class="sm ghost" data-m="close" aria-label="Fechar">×</button></div>';
+  h+='<div class="mtool"><input type="text" id="mgQ" placeholder="Buscar tabela…" value="'+esc(mgrQ)+'">'
+    +'<button class="sm" data-m="all">Selecionar todas</button><button class="sm" data-m="none">Limpar seleção</button>'
+    +'<span class="spacer"></span><button class="sm primary" data-m="newS">+ Schema</button></div>';
+  h+='<div class="mlist">';
+  names.forEach(n=>{
+    const ts=S.tables.filter(t=>ofSchema(t,n)&&casaBusca(t));
+    const todas=S.tables.filter(t=>ofSchema(t,n));
+    const ne=S.enums.filter(e=>(e.schema||'public')===n).length+(S.functions||[]).filter(f=>(f.schema||'public')===n).length;
+    const marcado=ts.length>0&&ts.every(t=>mgrSel.has(t.id));
+    h+='<section class="mgs"><div class="mgh"><input type="checkbox" data-m="grp" data-s="'+esc(n)+'"'+(marcado?' checked':'')+(ts.length?'':' disabled')+'>'
+      +'<b>'+esc(n)+'</b><span class="muted">'+todas.length+' tabela(s) · '+ne+' enum/função</span><span class="spacer"></span>'
+      +'<button class="sm ghost" data-m="ren" data-s="'+esc(n)+'">Renomear</button>'
+      +'<button class="sm ghost danger" data-m="del" data-s="'+esc(n)+'">Excluir</button></div>';
+    h+=ts.map(t=>'<label class="mrow"><input type="checkbox" data-m="tab" data-id="'+t.id+'"'+(mgrSel.has(t.id)?' checked':'')+'><span class="mn">'+esc(t.name)+'</span><span class="muted">'+t.cols.length+' colunas</span></label>').join('')
+      ||'<div class="muted pad">'+(mgrQ?'Nenhuma tabela com esse nome':'Sem tabelas')+'</div>';
+    h+='</section>';
+  });
+  h+='</div>';
+  h+='<div class="mfoot"><span>'+mgrSel.size+' selecionada(s)</span><span class="spacer"></span><span class="muted">Mover para</span>'
+    +'<select id="mgTo">'+names.map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join('')+'</select>'
+    +'<button class="sm primary" data-m="move"'+(mgrSel.size?'':' disabled')+'>Mover</button></div>';
+  $('#mgr .mg').innerHTML=h;
+}
+function abrirMgr(){mgrSel.clear();$('#mgr').hidden=false;renderMgr()}
+function fecharMgr(){$('#mgr').hidden=true}
+function mgrMover(){
+  const to=$('#mgTo').value;const ids=[...mgrSel];if(!ids.length)return;
+  histBefore(null);ensureSchema(to);
+  let n=0;
+  ids.forEach(id=>{const t=tOf(id);if(t&&!ofSchema(t,to)){t.schema=to;t.x=null;t.y=null;n++}});
+  mgrSel.clear();
+  afterMgr(n+' tabela(s) movida(s) para "'+to+'".');
+}
+function novoSchema(){
+  openModal({title:'Novo schema',value:'novo_schema',ok:'Criar',msg:'Depois, marque as tabelas e use "Mover".',
+    onOk:name=>{
+      const n=String(name||'').trim().replace(/\s+/g,'_');if(!n)return;
+      if(schemaNames().includes(n)){setNotice('Já existe um schema "'+n+'".');renderOut(true);return}
+      histBefore(null);ensureSchema(n);afterMgr('Schema "'+n+'" criado.');
+    }});
+}
+function renomearSchema(old){
+  openModal({title:'Renomear schema',value:old,ok:'Renomear',
+    onOk:name=>{
+      const n=String(name||'').trim().replace(/\s+/g,'_');if(!n||n===old)return;
+      if(schemaNames().includes(n)){setNotice('Já existe um schema "'+n+'".');renderOut(true);return}
+      histBefore(null);
+      S.tables.forEach(t=>{
+        if(ofSchema(t,old))t.schema=n;
+        t.cols.forEach(c=>{if(c.type&&c.type.startsWith(old+'.'))c.type=n+c.type.slice(old.length)});
+        (t.triggers||[]).forEach(g=>{if(g.function&&g.function.startsWith(old+'.'))g.function=n+g.function.slice(old.length)});
+      });
+      S.enums.forEach(e=>{if((e.schema||'public')===old)e.schema=n});
+      (S.functions||[]).forEach(f=>{if((f.schema||'public')===old)f.schema=n});
+      if(S.schemas)S.schemas=S.schemas.map(s=>s.name===old?{name:n,comment:s.comment}:s);
+      ensureSchema(n);
+      afterMgr('Schema "'+old+'" renomeado para "'+n+'".');
+    }});
+}
+function excluirSchema(n){
+  if(n==='public'){setNotice('O schema public não pode ser excluído.');renderOut(true);return}
+  const uso=S.tables.filter(t=>ofSchema(t,n)).length+S.enums.filter(e=>(e.schema||'public')===n).length+(S.functions||[]).filter(f=>(f.schema||'public')===n).length;
+  if(uso){setNotice('Não dá para excluir "'+n+'": ainda tem '+uso+' item(ns). Mova as tabelas antes.');renderOut(true);renderMgr();return}
+  confirmDel('o schema "'+n+'"',()=>{S.schemas=(S.schemas||[]).filter(s=>s.name!==n);afterMgr('Schema "'+n+'" excluído.')});
+}
+$('#bSchemas').onclick=abrirMgr;
+$('#mgr').addEventListener('click',e=>{
+  if(e.target.id==='mgr'){fecharMgr();return}
+  const b=e.target.closest('[data-m]');if(!b)return;
+  const a=b.dataset.m,sn=b.dataset.s;
+  if(a==='close')fecharMgr();
+  else if(a==='all'){visibleTabs().forEach(t=>mgrSel.add(t.id));renderMgr()}
+  else if(a==='none'){mgrSel.clear();renderMgr()}
+  else if(a==='newS')novoSchema();
+  else if(a==='ren')renomearSchema(sn);
+  else if(a==='del')excluirSchema(sn);
+  else if(a==='move')mgrMover();
+});
+$('#mgr').addEventListener('change',e=>{
+  const el=e.target;
+  if(el.dataset.m==='tab'){el.checked?mgrSel.add(el.dataset.id):mgrSel.delete(el.dataset.id);renderMgr()}
+  else if(el.dataset.m==='grp'){
+    S.tables.filter(t=>ofSchema(t,el.dataset.s)&&casaBusca(t)).forEach(t=>{el.checked?mgrSel.add(t.id):mgrSel.delete(t.id)});
+    renderMgr();
+  }
+});
+$('#mgr').addEventListener('input',e=>{
+  if(e.target.id!=='mgQ')return;
+  mgrQ=e.target.value;renderMgr();
+  const q=$('#mgQ');q.focus();q.setSelectionRange(q.value.length,q.value.length);
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#mgr').hidden)fecharMgr()});
 
 /* ---------- barra do diagrama ---------- */
 $('#bLayout').onclick=()=>{histBefore(null);layoutSchemas(true);needFit=true;renderOut()};
